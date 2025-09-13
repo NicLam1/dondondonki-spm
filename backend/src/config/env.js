@@ -1,0 +1,36 @@
+const required = [
+  'JWT_SECRET',
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
+];
+
+const env = {
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  PORT: process.env.PORT || 4000,
+  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  JWT_SECRET: process.env.JWT_SECRET,
+  REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+  SMTP_HOST: process.env.SMTP_HOST,
+  SMTP_PORT: process.env.SMTP_PORT,
+  SMTP_USER: process.env.SMTP_USER,
+  SMTP_PASS: process.env.SMTP_PASS,
+  SMTP_FROM: process.env.SMTP_FROM || 'no-reply@example.com',
+};
+
+function validateEnv() {
+  const missing = required.filter((k) => !env[k]);
+  if (missing.length > 0) {
+    // Do not throw in test environment
+    if (env.NODE_ENV !== 'test') {
+      throw new Error(`Missing environment variables: ${missing.join(', ')}`);
+    }
+  }
+}
+
+validateEnv();
+
+module.exports = { env };
+
+
