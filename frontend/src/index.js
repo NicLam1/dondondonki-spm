@@ -9,8 +9,15 @@ import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 const queryClient = new QueryClient();
 const theme = createTheme({
   palette: {
-    mode: 'light'
-  }
+    mode: 'light',
+    primary: { main: '#6A11CB' },
+    secondary: { main: '#4E54C8' },
+    background: { default: '#f6f7fb' }
+  },
+  typography: {
+    fontFamily: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', Arial, sans-serif"
+  },
+  shape: { borderRadius: 12 }
 });
 
 const root = ReactDOM.createRoot(document.getElementById('root'));

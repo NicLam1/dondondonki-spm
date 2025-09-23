@@ -1,5 +1,4 @@
 const required = [
-  'JWT_SECRET',
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
 ];
@@ -23,7 +22,8 @@ function validateEnv() {
   const missing = required.filter((k) => !env[k]);
   if (missing.length > 0) {
     // Do not throw in test environment
-    if (env.NODE_ENV !== 'test') {
+    // Also allow mock mode without Supabase
+    if (env.NODE_ENV !== 'test' && process.env.MOCK_API !== 'true') {
       throw new Error(`Missing environment variables: ${missing.join(', ')}`);
     }
   }
