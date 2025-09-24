@@ -1,9 +1,6 @@
 import '../App.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AppBar,
-  Avatar,
-  Badge,
   Box,
   Card,
   CardActionArea,
@@ -17,33 +14,29 @@ import {
   DialogTitle,
   Button,
   Divider,
-  Drawer,
   FormControl,
-  IconButton,
-  InputBase,
   InputLabel,
-  List,
-  ListItemButton,
-  ListItemIcon,
   ListItemText,
   MenuItem,
   Paper,
   Select,
   Stack,
-  Toolbar,
-  Tooltip,
   Typography,
+  IconButton,
 } from '@mui/material';
+import Snackbar from '@mui/material/Snackbar';
+import Alert from '@mui/material/Alert';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PersonIcon from '@mui/icons-material/Person';
-import BuildIcon from '@mui/icons-material/Build';
 import SettingsIcon from '@mui/icons-material/Settings';
 import MailIcon from '@mui/icons-material/Mail';
-import BarChartIcon from '@mui/icons-material/BarChart';
-import ExtensionIcon from '@mui/icons-material/Extension';
-import MenuOpenIcon from '@mui/icons-material/MenuOpen';
-import MenuIcon from '@mui/icons-material/Menu';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+// import MenuOpenIcon from '@mui/icons-material/MenuOpen';
+// import MenuIcon from '@mui/icons-material/Menu';
 import { useQuery } from '@tanstack/react-query';
+import Sidebar from '../components/Sidebar';
+import Topbar from '../components/Topbar';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4000/api';
 
@@ -100,6 +93,9 @@ export default function TasksPage() {
   const SIDEBAR_WIDTH = 240;
   const SIDEBAR_MINI_WIDTH = 80;
 
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'error' });
+  const showError = (msg) => setSnackbar({ open: true, message: msg, severity: 'error' });
+
   const { data: usersData } = useQuery({
     queryKey: ['users'],
     queryFn: () => fetchJson('/users'),
@@ -141,8 +137,10 @@ export default function TasksPage() {
       selectedUserId
         ? {
             acting_user_id: selectedUserId,
-            user_ids: (actingUser && actingUser.access_level > 0)
-              ? ((viewUserIds && viewUserIds.length) ? viewUserIds.join(',') : '')
+            user_ids: actingUser
+              ? (actingUser.access_level > 0
+                  ? ((viewUserIds && viewUserIds.length) ? viewUserIds.join(',') : '')
+                  : String(actingUser.user_id))
               : undefined,
           }
         : undefined
@@ -153,6 +151,17 @@ export default function TasksPage() {
   const tasks = (actingUser && actingUser.access_level > 0 && viewUserIds.length === 0)
     ? []
     : (tasksData?.data || []);
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.task_id, t])), [tasks]);
+  const childrenByParentId = useMemo(() => {
+    const map = new Map();
+    for (const t of tasks) {
+      const parentId = t.parent_task_id;
+      if (parentId == null) continue;
+      if (!map.has(parentId)) map.set(parentId, []);
+      map.get(parentId).push(t);
+    }
+    return map;
+  }, [tasks]);
   const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
   const tasksByStatus = useMemo(() => {
     const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
@@ -164,6 +173,121 @@ export default function TasksPage() {
     Object.keys(group).forEach((k) => group[k].sort((a, b) => (priorityRank[a.priority] ?? 99) - (priorityRank[b.priority] ?? 99)));
     return group;
   }, [tasks]);
+
+  // Hierarchy helpers for modal
+  // Ancestors: fetch from backend to include hidden parents
+  const { data: ancestorsData } = useQuery({
+    queryKey: ['task-ancestors', selectedTask?.task_id],
+    queryFn: () => selectedTask ? fetchJson(`/tasks/${selectedTask.task_id}/ancestors`) : Promise.resolve({ data: [] }),
+    enabled: Boolean(selectedTask?.task_id),
+  });
+  const ancestorChain = ancestorsData?.data || [];
+
+  // Fetch full descendants when allowed: owner or higher access than owner
+  const selectedOwner = useMemo(() => (selectedTask ? usersById.get(selectedTask.owner_id) : null), [selectedTask, usersById]);
+  const canViewFullSubtree = useMemo(() => {
+    if (!selectedTask || !actingUser) return false;
+    if (selectedTask.owner_id === actingUser.user_id) return true;
+    if (selectedOwner && typeof selectedOwner.access_level === 'number' && typeof actingUser.access_level === 'number') {
+      return actingUser.access_level > selectedOwner.access_level;
+    }
+    return false;
+  }, [selectedTask, actingUser, selectedOwner]);
+  const { data: descendantsData } = useQuery({
+    queryKey: ['task-descendants', selectedTask?.task_id, canViewFullSubtree],
+    queryFn: () => (selectedTask && canViewFullSubtree) ? fetchJson(`/tasks/${selectedTask.task_id}/descendants`) : Promise.resolve({ data: [] }),
+    enabled: Boolean(selectedTask?.task_id && canViewFullSubtree),
+  });
+  const ownerDescendants = descendantsData?.data || [];
+
+  const subtree = useMemo(() => {
+    if (!selectedTask) return [];
+    // If allowed, build from fetched descendants (full), else from visible tasks
+    const sourceChildrenByParent = (() => {
+      if (!canViewFullSubtree) return childrenByParentId;
+      const map = new Map();
+      for (const d of ownerDescendants) {
+        const pid = d.parent_task_id;
+        if (pid == null) continue;
+        if (!map.has(pid)) map.set(pid, []);
+        map.get(pid).push(d);
+      }
+      return map;
+    })();
+    const build = (task) => {
+      const children = sourceChildrenByParent.get(task.task_id) || [];
+      return children.map((c) => ({ task: c, children: build(c) }));
+    };
+    return build(selectedTask);
+  }, [selectedTask, childrenByParentId, canViewFullSubtree, ownerDescendants]);
+
+  // Expanded/collapsed state for subtask tree
+  const [expandedIds, setExpandedIds] = useState(new Set());
+  const toggleExpand = (taskId) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  };
+  // Ensure top-level nodes are expanded by default when subtree changes
+  useEffect(() => {
+    if (!subtree || subtree.length === 0) return;
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      for (const n of subtree) next.add(n.task.task_id);
+      return next;
+    });
+  }, [subtree]);
+
+  const renderTree = (nodes, depth = 0) => (
+    <Stack spacing={0.25}>
+      {nodes.map((n) => {
+        const hasChildren = !!(n.children && n.children.length);
+        const nodeId = n.task.task_id;
+        const isExpanded = hasChildren ? expandedIds.has(nodeId) : false;
+         const accessibleTask = tasksById.get(nodeId);
+         const isAccessible = Boolean(accessibleTask) || canViewFullSubtree;
+        return (
+          <Box key={nodeId} sx={{ ml: depth * 1.5 }}>
+            <Stack direction="row" spacing={0.5} alignItems="center" sx={styles.subtaskRow}>
+              {hasChildren ? (
+                <IconButton size="small" onClick={() => toggleExpand(nodeId)} sx={styles.subtaskArrowButton} aria-label={isExpanded ? 'Collapse' : 'Expand'}>
+                  {isExpanded ? <ExpandMoreIcon fontSize="inherit" /> : <ChevronRightIcon fontSize="inherit" />}
+                </IconButton>
+              ) : (
+                <Box sx={styles.subtaskArrowPlaceholder} />
+              )}
+               <Button
+                size="small"
+                variant="text"
+                 onClick={async () => {
+                   if (accessibleTask) { setSelectedTask(accessibleTask); return; }
+                   if (!canViewFullSubtree) { showError("You don't have permission to view this task."); return; }
+                   try {
+                     const resp = await fetchJson(`/tasks/${nodeId}`, { acting_user_id: String(actingUser.user_id) });
+                     if (resp && resp.data) setSelectedTask(resp.data);
+                   } catch (e) { showError('Unable to load task.'); }
+                 }}
+                sx={styles.subtaskTitleButton}
+                 disabled={false}
+              >
+                 <Typography variant="body2" color={isAccessible ? undefined : 'text.secondary'} sx={{ ...styles.subtaskTitleText, opacity: isAccessible ? 1 : 0.7 }}>
+                  {n.task.title}
+                </Typography>
+              </Button>
+            </Stack>
+            {hasChildren && isExpanded ? (
+              <Box sx={styles.subtaskChildren}>
+                {renderTree(n.children, depth + 1)}
+              </Box>
+            ) : null}
+          </Box>
+        );
+      })}
+    </Stack>
+  );
   const statusLabels = { TO_DO: 'To Do', IN_PROGRESS: 'In Progress', DONE: 'Completed' };
 
   const sidebarItems = [
@@ -175,86 +299,16 @@ export default function TasksPage() {
 
   return (
     <Box sx={styles.root}>
-      <Drawer
-        variant="permanent"
-        PaperProps={{
-          sx: { ...styles.drawerPaper, width: isSidebarOpen ? SIDEBAR_WIDTH : SIDEBAR_MINI_WIDTH },
-        }}
-        sx={{ ...styles.drawer, width: isSidebarOpen ? SIDEBAR_WIDTH : SIDEBAR_MINI_WIDTH }}
-      >
-        <Toolbar sx={{ ...styles.drawerToolbar, justifyContent: isSidebarOpen ? 'space-between' : 'center' }}>
-          {isSidebarOpen && (
-            <Typography variant="subtitle1" noWrap sx={styles.brandTitle}>DonkiBoard</Typography>
-          )}
-          <IconButton onClick={() => setIsSidebarOpen((v) => !v)} sx={styles.drawerToggleButton}>
-            {isSidebarOpen ? <MenuOpenIcon /> : <MenuIcon />}
-          </IconButton>
-        </Toolbar>
-        <Divider sx={styles.drawerDivider} />
-        <List sx={styles.drawerList}>
-          {sidebarItems.map((item) => (
-            <ListItemButton
-              key={item.key}
-              sx={{
-                ...styles.drawerItemButton,
-                justifyContent: isSidebarOpen ? 'flex-start' : 'center',
-                px: isSidebarOpen ? 2.5 : 1,
-              }}
-            >
-              <ListItemIcon
-                sx={{
-                  ...styles.drawerItemIcon,
-                  minWidth: isSidebarOpen ? 40 : 0,
-                  mr: isSidebarOpen ? 2 : 0,
-                  display: 'flex',
-                  justifyContent: 'center',
-                }}
-              >
-                {item.badge ? (
-                  <Badge color="secondary" badgeContent={item.badge} overlap="circular">
-                    {item.icon}
-                  </Badge>
-                ) : (
-                  item.icon
-                )}
-              </ListItemIcon>
-              {isSidebarOpen && <ListItemText primary={item.label} />}
-            </ListItemButton>
-          ))}
-        </List>
-        <Box sx={styles.flexGrow} />
-        <Box sx={{ ...styles.drawerFooter, justifyContent: isSidebarOpen ? 'space-between' : 'center' }}>
-          {isSidebarOpen && (
-            <Box>
-              <Typography variant="caption" sx={styles.footerHeading}>History available</Typography>
-              <Typography variant="caption" sx={styles.footerText}>Check your weekly</Typography>
-              <Typography variant="caption" sx={styles.footerText}>transaction reports</Typography>
-            </Box>
-          )}
-          <Avatar sx={styles.footerAvatar}>H</Avatar>
-        </Box>
-      </Drawer>
+      <Sidebar
+        open={isSidebarOpen}
+        onToggle={() => setIsSidebarOpen((v) => !v)}
+        items={sidebarItems}
+        title="DonkiBoard"
+      />
 
       <Box sx={styles.main}>
-        <AppBar position="sticky" elevation={0} color="transparent" sx={styles.appBar}>
-          <Toolbar sx={styles.topToolbar}>
-            {/* <Tooltip title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}>
-              <IconButton onClick={() => setIsSidebarOpen((v) => !v)}>
-                {isSidebarOpen ? <MenuOpenIcon /> : <MenuIcon />}
-              </IconButton>
-            </Tooltip> */}
-            <Paper sx={styles.searchPaper}>
-              <InputBase placeholder="Search…" sx={styles.searchInput} />
-            </Paper>
-            <IconButton>
-              <Badge color="primary" variant="dot">
-                <MailIcon />
-              </Badge>
-            </IconButton>
-            <Avatar>ML</Avatar>
-          </Toolbar>
-        </AppBar>
-
+        <Topbar />
+              
         <Box sx={styles.content}>
           <Container maxWidth={false} disableGutters sx={styles.contentContainer}>
             <Typography variant="h5" sx={styles.headerTitle}>Tasks</Typography>
@@ -364,6 +418,63 @@ export default function TasksPage() {
               <Divider sx={styles.dialogDivider} />
 
               <Box sx={styles.dialogSection}>
+                <Typography variant="overline" sx={styles.dialogSectionTitle}>Hierarchy</Typography>
+                {ancestorChain.length === 0 && (!subtree || subtree.length === 0) ? (
+                  <Typography variant="caption" color="text.secondary">No hierarchy</Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {(() => {
+                      const chain = ancestorChain.concat(selectedTask ? [selectedTask] : []);
+                      if (!chain.length) return null;
+                      return (
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                          {chain.map((t, idx) => (
+                            <Stack key={t.task_id} direction="row" spacing={1} alignItems="center">
+                              {(() => {
+                                const isCurrent = t.task_id === selectedTask.task_id;
+                                const accessibleTask = tasksById.get(t.task_id);
+                                const isAccessible = Boolean(accessibleTask) || canViewFullSubtree;
+                                const handleClick = async () => {
+                                  if (isCurrent) return;
+                                  if (accessibleTask) { setSelectedTask(accessibleTask); return; }
+                                  if (!canViewFullSubtree) { showError("You don't have permission to view this task."); return; }
+                                  try {
+                                    const resp = await fetchJson(`/tasks/${t.task_id}`, { acting_user_id: String(actingUser.user_id) });
+                                    if (resp && resp.data) setSelectedTask(resp.data);
+                                  } catch (e) { showError('You lack permissions to view this task.'); }
+                                };
+                                return (
+                                  <Chip
+                                    size="small"
+                                    label={t.title}
+                                    color={isCurrent ? 'primary' : undefined}
+                                    variant={isCurrent ? 'filled' : 'outlined'}
+                                    onClick={!isCurrent ? handleClick : undefined}
+                                    sx={{ cursor: (!isCurrent && isAccessible) ? 'pointer' : 'default', opacity: (!isCurrent && !isAccessible) ? 0.7 : 1 }}
+                                  />
+                                );
+                              })()}
+                              {idx < chain.length - 1 && (
+                                <Typography variant="caption" color="text.secondary">/</Typography>
+                              )}
+                            </Stack>
+                          ))}
+                        </Stack>
+                      );
+                    })()}
+                    {subtree && subtree.length > 0 && (
+                      <Box>
+                        <Typography variant="caption" sx={styles.dialogInfoLabel}>Subtasks</Typography>
+                        <Box sx={{ mt: 0.5 }}>{renderTree(subtree)}</Box>
+                      </Box>
+                    )}
+                  </Stack>
+                )}
+              </Box>
+
+              <Divider sx={styles.dialogDivider} />
+
+              <Box sx={styles.dialogSection}>
                 <Typography variant="overline" sx={styles.dialogSectionTitle}>Details</Typography>
                 <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
                   <Box sx={styles.dialogInfoItem}>
@@ -444,6 +555,17 @@ export default function TasksPage() {
           </>
         )}
       </Dialog>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={snackbar.severity} variant="filled" onClose={() => setSnackbar((s) => ({ ...s, open: false }))} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }
@@ -451,32 +573,9 @@ export default function TasksPage() {
 // styles
 const styles = {
   root: { display: 'flex', minHeight: '100vh', bgcolor: '#f6f7fb' },
-  drawer: { flexShrink: 0, '& .MuiDrawer-paper': { boxSizing: 'border-box' } },
-  drawerPaper: {
-    transition: 'width 200ms ease',
-    overflowX: 'hidden',
-    background: 'linear-gradient(180deg, #6a11cb 0%, #4e54c8 50%, #6a11cb 100%)',
-    color: 'white',
-    borderRight: 0,
-  },
-  drawerToolbar: { display: 'flex', alignItems: 'center' },
-  brandTitle: { fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 },
-  drawerToggleButton: { color: 'white' },
-  drawerDivider: { borderColor: 'rgba(255,255,255,0.3)' },
-  drawerList: { py: 1 },
-  drawerItemButton: { px: 2.5, py: 1.25, '&:hover': { backgroundColor: 'rgba(255,255,255,0.08)' } },
-  drawerItemIcon: { minWidth: 40, color: 'inherit' },
   flexGrow: { flexGrow: 1 },
-  drawerFooter: { p: 2, display: 'flex', alignItems: 'center' },
-  footerHeading: { opacity: 0.8 },
-  footerText: { opacity: 0.6, display: 'block' },
-  footerAvatar: { bgcolor: 'rgba(255,255,255,0.2)' },
 
   main: { flexGrow: 1, display: 'flex', flexDirection: 'column' },
-  appBar: { backdropFilter: 'blur(4px)', borderBottom: '1px solid #ede7ff', backgroundColor: 'rgba(255,255,255,0.85)' },
-  topToolbar: { gap: 2, marginLeft: "24px"},
-  searchPaper: { px: 2, py: 0.5, display: 'flex', alignItems: 'center', gap: 1, borderRadius: 2, flex: 1, boxShadow: 'none', border: '1px solid #e8e0ff' },
-  searchInput: { flex: 1 },
   content: { p: 3 },
   contentContainer: { px: 3 },
   headerTitle: { mb: 4, fontWeight: 700, letterSpacing: 0.2, fontSize: "3em"},
@@ -509,4 +608,32 @@ const styles = {
   dialogInfoItem: { minWidth: 160 },
   dialogInfoLabel: { color: 'text.secondary' },
   dialogInfoValue: { fontWeight: 500 },
+  // Subtask tree styles
+  subtaskRow: {
+    py: 0.25,
+    px: 0.5,
+    borderRadius: 1,
+    '&:hover': { backgroundColor: 'rgba(106,17,203,0.06)' },
+  },
+  subtaskArrowButton: {
+    p: 0.25,
+    color: 'text.secondary',
+    '&:hover': { backgroundColor: 'transparent', color: '#6A11CB' },
+  },
+  subtaskArrowPlaceholder: { width: 28, height: 28 },
+  subtaskTitleButton: {
+    textTransform: 'none',
+    p: 0.25,
+    minWidth: 0,
+    justifyContent: 'flex-start',
+  },
+  subtaskTitleText: {
+    fontWeight: 500,
+    '&:hover': { textDecoration: 'underline' },
+  },
+  subtaskChildren: {
+    ml: 1.5,
+    pl: 1,
+    borderLeft: '1px dashed #e0e0e0',
+  },
 };
