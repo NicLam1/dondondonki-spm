@@ -1,0 +1,31 @@
+/* Animated rainbow outline utility for buttons */
+.rainbow-border {
+  position: relative;
+  display: inline-block;
+  padding: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    #ff005e,
+    #ff7a00,
+    #ffd000,
+    #2bdc00,
+    #00c2ff,
+    #7a5cff,
+    #ff005e
+  );
+  background-size: 300% 300%;
+  animation: moveGradient 4s linear infinite;
+}
+
+@keyframes moveGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
