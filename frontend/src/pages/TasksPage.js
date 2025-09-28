@@ -23,6 +23,7 @@ import {
   Stack,
   Typography,
   IconButton,
+  Menu,
 } from "@mui/material";
 import Snackbar from "@mui/material/Snackbar";
 import Alert from "@mui/material/Alert";
@@ -33,24 +34,45 @@ import MailIcon from "@mui/icons-material/Mail";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddIcon from "@mui/icons-material/Add";
-// import MenuOpenIcon from '@mui/icons-material/MenuOpen';
-// import MenuIcon from '@mui/icons-material/Menu';
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
+// ---------- API helpers ----------
 async function fetchJson(path, params) {
   const url = new URL(`${API_BASE}${path}`);
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   }
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error("Network error");
-  return res.json();
+  const res = await fetch(url.toString(), { credentials: "include" });
+  let json = null;
+  try {
+    json = await res.json();
+  } catch (_) {
+    // non-JSON responses ignored
+  }
+  if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+  return json ?? {};
 }
 
+async function apiJson(path, { method = "GET", params, body } = {}) {
+  const url = new URL(`${API_BASE}${path}`);
+  if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  const res = await fetch(url.toString(), {
+    method,
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let json = null;
+  try { json = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+  return json ?? {};
+}
+
+// ---------- UI chips ----------
 function StatusChip({ value }) {
   const color =
     value === "DONE"
@@ -67,11 +89,79 @@ function PriorityChip({ value }) {
   return <Chip label={value} color={color} variant="outlined" size="small" />;
 }
 
+// Editable status chip (dropdown)
+const STATUS_OPTIONS = ["TO_DO", "IN_PROGRESS", "DONE"];
+function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
+  const [anchorEl, setAnchorEl] = useState(null);
+  const open = Boolean(anchorEl);
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (newStatus) =>
+      apiJson(`/tasks/${task.task_id}/status`, {
+        method: "PATCH",
+        params: { acting_user_id: String(actingUserId) },
+        body: { status: newStatus },
+      }),
+    onMutate: async (newStatus) => {
+      // Optimistic update
+      onLocalUpdate?.({ ...task, status: newStatus });
+      await queryClient.cancelQueries({ queryKey: ["tasks"] });
+      return {};
+    },
+    onError: (_err, _vars, _ctx) => {
+      // Let query invalidation refresh the truth
+    },
+    onSuccess: () => {
+      // Refresh queries that show this task
+      queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
+      queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
+    },
+  });
+
+  const handleClick = (e) => setAnchorEl(e.currentTarget);
+  const handleClose = () => setAnchorEl(null);
+  const handleChange = (val) => {
+    handleClose();
+    if (val && val !== task.status) mutation.mutate(val);
+  };
+
+  const chipColor =
+    task.status === "DONE"
+      ? "success"
+      : task.status === "IN_PROGRESS"
+      ? "warning"
+      : "default";
+
+  return (
+    <>
+      <Chip
+        label={task.status}
+        color={chipColor}
+        variant="outlined"
+        size="small"
+        onClick={handleClick}
+        sx={{ cursor: "pointer" }}
+      />
+      <Menu anchorEl={anchorEl} open={open} onClose={handleClose}>
+        {STATUS_OPTIONS.map((s) => (
+          <MenuItem
+            key={s}
+            selected={s === task.status}
+            onClick={() => handleChange(s)}
+          >
+            {s}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+}
+
 function TaskCard({ task, usersById, onOpen }) {
-  const owner = usersById.get(task.owner_id);
-  const members = (task.members_id || [])
-    .map((id) => usersById.get(id))
-    .filter(Boolean);
+  // owner/members prepared if you want to display later
+  void usersById;
   return (
     <Card variant="outlined" sx={styles.taskCard}>
       <CardActionArea onClick={onOpen} sx={styles.taskCardAction}>
@@ -104,8 +194,10 @@ export default function TasksPage() {
   const [selectedTask, setSelectedTask] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const SIDEBAR_WIDTH = 240;
-  const SIDEBAR_MINI_WIDTH = 80;
+  // Pagination for task list
+  const [page, setPage] = useState(0);
+  const limit = 50;
+  const offset = page * limit;
 
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -118,6 +210,7 @@ export default function TasksPage() {
   const { data: usersData } = useQuery({
     queryKey: ["users"],
     queryFn: () => fetchJson("/users"),
+    staleTime: 60_000,
   });
 
   const users = usersData?.data || [];
@@ -136,9 +229,13 @@ export default function TasksPage() {
     () => users.find((u) => String(u.user_id) === String(selectedUserId)),
     [users, selectedUserId]
   );
+
+  // Strict outrank rule (include self)
   const allowedUsers = useMemo(() => {
     if (!actingUser) return [];
-    return users.filter((u) => u.access_level <= actingUser.access_level);
+    return users.filter(
+      (u) => u.user_id === actingUser.user_id || u.access_level < actingUser.access_level
+    );
   }, [users, actingUser]);
 
   useEffect(() => {
@@ -149,41 +246,55 @@ export default function TasksPage() {
     if (prev !== actingIdStr) {
       prevActingIdRef.current = actingIdStr;
       if (allowedIds.has(actingIdStr)) setViewUserIds([actingIdStr]);
+      setPage(0);
       return;
     }
     const pruned = viewUserIds.filter((id) => allowedIds.has(String(id)));
     if (pruned.length !== viewUserIds.length) setViewUserIds(pruned);
-  }, [actingUser, allowedUsers]);
+    setPage(0);
+  }, [actingUser, allowedUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data: tasksData, isLoading } = useQuery({
-    queryKey: ["tasks", selectedUserId, viewUserIds],
-    queryFn: () =>
-      fetchJson(
-        "/tasks",
-        selectedUserId
-          ? {
-              acting_user_id: selectedUserId,
-              user_ids: actingUser
-                ? actingUser.access_level > 0
-                  ? viewUserIds && viewUserIds.length
-                    ? viewUserIds.join(",")
-                    : ""
-                  : String(actingUser.user_id)
-                : undefined,
-            }
-          : undefined
-      ),
+  const {
+    data: tasksData,
+    isLoading,
+    isFetching,
+    error: tasksError,
+  } = useQuery({
+    queryKey: ["tasks", selectedUserId, viewUserIds, page],
+    queryFn: () => {
+      if (!selectedUserId) return fetchJson("/tasks");
+      const params = {
+        acting_user_id: selectedUserId,
+        limit: String(limit),
+        offset: String(offset),
+      };
+      if (actingUser) {
+        if (actingUser.access_level > 0) {
+          if (Array.isArray(viewUserIds) && viewUserIds.length > 0) {
+            params.user_ids = viewUserIds.join(",");
+          }
+        } else {
+          // non-manager: lock to self
+          params.user_ids = String(actingUser.user_id);
+        }
+      }
+      return fetchJson("/tasks", params);
+    },
     enabled: Boolean(selectedUserId),
+    keepPreviousData: true,
+    staleTime: 10_000,
+    retry: 1,
+    onError: (e) => showError(e?.message || "Failed to load tasks"),
   });
 
-  const tasks =
-    actingUser && actingUser.access_level > 0 && viewUserIds.length === 0
-      ? []
-      : tasksData?.data || [];
+  const tasks = tasksData?.data || [];
+  const total = tasksData?.page?.total ?? null;
+
   const tasksById = useMemo(
     () => new Map(tasks.map((t) => [t.task_id, t])),
     [tasks]
   );
+
   const childrenByParentId = useMemo(() => {
     const map = new Map();
     for (const t of tasks) {
@@ -194,6 +305,7 @@ export default function TasksPage() {
     }
     return map;
   }, [tasks]);
+
   const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
   const tasksByStatus = useMemo(() => {
     const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
@@ -211,8 +323,7 @@ export default function TasksPage() {
     return group;
   }, [tasks]);
 
-  // Hierarchy helpers for modal
-  // Ancestors: fetch from backend to include hidden parents
+  // Ancestors: backend returns minimal chain (non-deleted)
   const { data: ancestorsData } = useQuery({
     queryKey: ["task-ancestors", selectedTask?.task_id],
     queryFn: () =>
@@ -220,10 +331,11 @@ export default function TasksPage() {
         ? fetchJson(`/tasks/${selectedTask.task_id}/ancestors`)
         : Promise.resolve({ data: [] }),
     enabled: Boolean(selectedTask?.task_id),
+    staleTime: 10_000,
   });
   const ancestorChain = ancestorsData?.data || [];
 
-  // Fetch full descendants when allowed: owner or higher access than owner
+  // Descendants: allowed if owner or strictly outranks owner
   const selectedOwner = useMemo(
     () => (selectedTask ? usersById.get(selectedTask.owner_id) : null),
     [selectedTask, usersById]
@@ -240,6 +352,7 @@ export default function TasksPage() {
     }
     return false;
   }, [selectedTask, actingUser, selectedOwner]);
+
   const { data: descendantsData } = useQuery({
     queryKey: ["task-descendants", selectedTask?.task_id, canViewFullSubtree],
     queryFn: () =>
@@ -247,12 +360,12 @@ export default function TasksPage() {
         ? fetchJson(`/tasks/${selectedTask.task_id}/descendants`)
         : Promise.resolve({ data: [] }),
     enabled: Boolean(selectedTask?.task_id && canViewFullSubtree),
+    staleTime: 10_000,
   });
   const ownerDescendants = descendantsData?.data || [];
 
   const subtree = useMemo(() => {
     if (!selectedTask) return [];
-    // If allowed, build from fetched descendants (full), else from visible tasks
     const sourceChildrenByParent = (() => {
       if (!canViewFullSubtree) return childrenByParentId;
       const map = new Map();
@@ -271,7 +384,6 @@ export default function TasksPage() {
     return build(selectedTask);
   }, [selectedTask, childrenByParentId, canViewFullSubtree, ownerDescendants]);
 
-  // Expanded/collapsed state for subtask tree
   const [expandedIds, setExpandedIds] = useState(new Set());
   const toggleExpand = (taskId) => {
     setExpandedIds((prev) => {
@@ -281,7 +393,6 @@ export default function TasksPage() {
       return next;
     });
   };
-  // Ensure top-level nodes are expanded by default when subtree changes
   useEffect(() => {
     if (!subtree || subtree.length === 0) return;
     setExpandedIds((prev) => {
@@ -345,7 +456,6 @@ export default function TasksPage() {
                   }
                 }}
                 sx={styles.subtaskTitleButton}
-                disabled={false}
               >
                 <Typography
                   variant="body2"
@@ -369,6 +479,7 @@ export default function TasksPage() {
       })}
     </Stack>
   );
+
   const statusLabels = {
     TO_DO: "To Do",
     IN_PROGRESS: "In Progress",
@@ -395,11 +506,7 @@ export default function TasksPage() {
         <Topbar />
 
         <Box sx={styles.content}>
-          <Container
-            maxWidth={false}
-            disableGutters
-            sx={styles.contentContainer}
-          >
+          <Container maxWidth={false} disableGutters sx={styles.contentContainer}>
             <Box sx={styles.headerRow}>
               <Typography variant="h5" sx={styles.headerTitle}>
                 Tasks
@@ -422,6 +529,7 @@ export default function TasksPage() {
                   ))}
                 </Select>
               </FormControl>
+
               {actingUser && actingUser.access_level > 0 && (
                 <FormControl sx={styles.selectMedium}>
                   <InputLabel id="view-users-label">View tasks of</InputLabel>
@@ -477,19 +585,13 @@ export default function TasksPage() {
                     {["TO_DO", "IN_PROGRESS", "DONE"].map((status) => (
                       <Box key={status} sx={styles.column}>
                         <Paper elevation={0} sx={styles.columnPaper}>
-                          <Typography
-                            variant="subtitle1"
-                            sx={styles.columnTitle}
-                          >
+                          <Typography variant="subtitle1" sx={styles.columnTitle}>
                             {statusLabels[status]}
                           </Typography>
                           {tasksByStatus[status].length === 0 ? (
                             <Box sx={styles.columnEmpty}>
-                              <Typography
-                                variant="body2"
-                                sx={styles.columnEmptyText}
-                              >
-                                No tasks
+                              <Typography variant="body2" sx={styles.columnEmptyText}>
+                                {isFetching ? "Refreshing…" : "No tasks"}
                               </Typography>
                             </Box>
                           ) : (
@@ -508,12 +610,37 @@ export default function TasksPage() {
                       </Box>
                     ))}
                   </Box>
+
+                  {/* Simple pager */}
+                  {total != null && (
+                    <Stack direction="row" spacing={2} sx={{ mt: 2 }} alignItems="center">
+                      <Typography variant="caption">
+                        Showing {total === 0 ? 0 : offset + 1}–{Math.min(offset + limit, total)} of {total}
+                      </Typography>
+                      <Button
+                        size="small"
+                        disabled={page === 0 || isFetching}
+                        onClick={() => setPage((p) => Math.max(0, p - 1))}
+                      >
+                        Prev
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={isFetching || offset + limit >= total}
+                        onClick={() => setPage((p) => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </Stack>
+                  )}
+
                   <Box sx={styles.addTaskFabWrapper} className="rainbow-border">
                     <Button
                       variant="contained"
                       disableElevation
                       startIcon={<AddIcon />}
                       sx={styles.addTaskButton}
+                      disabled={!actingUser}
                     >
                       Add task
                     </Button>
@@ -525,6 +652,7 @@ export default function TasksPage() {
         </Box>
       </Box>
 
+      {/* Task dialog */}
       <Dialog
         open={Boolean(selectedTask)}
         onClose={() => setSelectedTask(null)}
@@ -546,7 +674,11 @@ export default function TasksPage() {
                   {selectedTask.title}
                 </Typography>
                 <Stack direction="row" spacing={1}>
-                  <StatusChip value={selectedTask.status} />
+                  <StatusChipEditable
+                    task={selectedTask}
+                    actingUserId={actingUser?.user_id}
+                    onLocalUpdate={(t) => setSelectedTask(t)}
+                  />
                   <PriorityChip value={selectedTask.priority} />
                 </Stack>
               </Stack>
@@ -567,38 +699,23 @@ export default function TasksPage() {
                 <Typography variant="overline" sx={styles.dialogSectionTitle}>
                   Hierarchy
                 </Typography>
-                {ancestorChain.length === 0 &&
-                (!subtree || subtree.length === 0) ? (
+                {ancestorChain.length === 0 && (!subtree || subtree.length === 0) ? (
                   <Typography variant="caption" color="text.secondary">
                     No hierarchy
                   </Typography>
                 ) : (
                   <Stack spacing={1}>
                     {(() => {
-                      const chain = ancestorChain.concat(
-                        selectedTask ? [selectedTask] : []
-                      );
+                      const chain = ancestorChain.concat(selectedTask ? [selectedTask] : []);
                       if (!chain.length) return null;
                       return (
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          alignItems="center"
-                          flexWrap="wrap"
-                        >
+                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                           {chain.map((t, idx) => (
-                            <Stack
-                              key={t.task_id}
-                              direction="row"
-                              spacing={1}
-                              alignItems="center"
-                            >
+                            <Stack key={t.task_id} direction="row" spacing={1} alignItems="center">
                               {(() => {
-                                const isCurrent =
-                                  t.task_id === selectedTask.task_id;
+                                const isCurrent = t.task_id === selectedTask.task_id;
                                 const accessibleTask = tasksById.get(t.task_id);
-                                const isAccessible =
-                                  Boolean(accessibleTask) || canViewFullSubtree;
+                                const isAccessible = Boolean(accessibleTask) || canViewFullSubtree;
                                 const handleClick = async () => {
                                   if (isCurrent) return;
                                   if (accessibleTask) {
@@ -606,26 +723,16 @@ export default function TasksPage() {
                                     return;
                                   }
                                   if (!canViewFullSubtree) {
-                                    showError(
-                                      "You don't have permission to view this task."
-                                    );
+                                    showError("You don't have permission to view this task.");
                                     return;
                                   }
                                   try {
-                                    const resp = await fetchJson(
-                                      `/tasks/${t.task_id}`,
-                                      {
-                                        acting_user_id: String(
-                                          actingUser.user_id
-                                        ),
-                                      }
-                                    );
-                                    if (resp && resp.data)
-                                      setSelectedTask(resp.data);
+                                    const resp = await fetchJson(`/tasks/${t.task_id}`, {
+                                      acting_user_id: String(actingUser.user_id),
+                                    });
+                                    if (resp && resp.data) setSelectedTask(resp.data);
                                   } catch (e) {
-                                    showError(
-                                      "You lack permissions to view this task."
-                                    );
+                                    showError("You lack permissions to view this task.");
                                   }
                                 };
                                 return (
@@ -634,25 +741,16 @@ export default function TasksPage() {
                                     label={t.title}
                                     color={isCurrent ? "primary" : undefined}
                                     variant={isCurrent ? "filled" : "outlined"}
-                                    onClick={
-                                      !isCurrent ? handleClick : undefined
-                                    }
+                                    onClick={!isCurrent ? handleClick : undefined}
                                     sx={{
-                                      cursor:
-                                        !isCurrent && isAccessible
-                                          ? "pointer"
-                                          : "default",
-                                      opacity:
-                                        !isCurrent && !isAccessible ? 0.7 : 1,
+                                      cursor: !isCurrent && isAccessible ? "pointer" : "default",
+                                      opacity: !isCurrent && !isAccessible ? 0.7 : 1,
                                     }}
                                   />
                                 );
                               })()}
                               {idx < chain.length - 1 && (
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                >
+                                <Typography variant="caption" color="text.secondary">
                                   /
                                 </Typography>
                               )}
@@ -661,12 +759,10 @@ export default function TasksPage() {
                         </Stack>
                       );
                     })()}
+
                     {subtree && subtree.length > 0 && (
                       <Box>
-                        <Typography
-                          variant="caption"
-                          sx={styles.dialogInfoLabel}
-                        >
+                        <Typography variant="caption" sx={styles.dialogInfoLabel}>
                           Subtasks
                         </Typography>
                         <Box sx={{ mt: 0.5 }}>{renderTree(subtree)}</Box>
@@ -807,11 +903,7 @@ export default function TasksPage() {
                     </Typography>
                   ) : (
                     (selectedTask.attachments || []).map((a, idx) => (
-                      <Chip
-                        key={idx}
-                        label={a.name || "file.pdf"}
-                        size="small"
-                      />
+                      <Chip key={idx} label={a.name || "file.pdf"} size="small" />
                     ))
                   )}
                 </Stack>
@@ -843,7 +935,7 @@ export default function TasksPage() {
   );
 }
 
-// styles
+// ---------- styles ----------
 const styles = {
   root: { display: "flex", minHeight: "100vh", bgcolor: "#f6f7fb" },
   flexGrow: { flexGrow: 1 },
@@ -878,8 +970,7 @@ const styles = {
     borderRadius: 3,
     border: "1px solid #d9d9d9",
     backgroundColor: "#ffffff",
-    boxShadow:
-      "0 3px 10px rgba(106,17,203,0.08), 0 1px 0 rgba(106,17,203,0.06)",
+    boxShadow: "0 3px 10px rgba(106,17,203,0.08), 0 1px 0 rgba(106,17,203,0.06)",
     padding: "24px",
   },
   columnTitle: {
@@ -933,13 +1024,11 @@ const styles = {
     fontSize: "1rem",
     px: 4.25,
     py: 1.5,
-    background:
-      "linear-gradient(180deg, #6A11CB 0%, #4E54C8 50%, #6A11CB 100%)",
+    background: "linear-gradient(180deg, #6A11CB 0%, #4E54C8 50%, #6A11CB 100%)",
     color: "#ffffff",
     boxShadow: "0 6px 16px rgba(78,84,200,0.24)",
     "&:hover": {
-      background:
-        "linear-gradient(180deg, #6A11CB 0%, #4E54C8 50%, #6A11CB 100%)",
+      background: "linear-gradient(180deg, #6A11CB 0%, #4E54C8 50%, #6A11CB 100%)",
       boxShadow: "0 10px 24px rgba(78,84,200,0.28)",
     },
   },
@@ -961,7 +1050,8 @@ const styles = {
   dialogInfoItem: { minWidth: 160 },
   dialogInfoLabel: { color: "text.secondary" },
   dialogInfoValue: { fontWeight: 500 },
-  // Subtask tree styles
+
+  // Subtask tree
   subtaskRow: {
     py: 0.25,
     px: 0.5,
