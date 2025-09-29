@@ -33,11 +33,15 @@ import MailIcon from "@mui/icons-material/Mail";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddIcon from "@mui/icons-material/Add";
+import DeleteIcon from "@mui/icons-material/Delete"; // ADD THIS LINE
 // import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 // import MenuIcon from '@mui/icons-material/Menu';
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
+import DeleteButton from '../components/DeleteButton';
+import PrioritySelector from '../components/PrioritySelector';
+
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
@@ -67,7 +71,7 @@ function PriorityChip({ value }) {
   return <Chip label={value} color={color} variant="outlined" size="small" />;
 }
 
-function TaskCard({ task, usersById, onOpen }) {
+function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate  }) {
   const owner = usersById.get(task.owner_id);
   const members = (task.members_id || [])
     .map((id) => usersById.get(id))
@@ -85,7 +89,19 @@ function TaskCard({ task, usersById, onOpen }) {
             <Typography variant="h6">{task.title}</Typography>
             <Stack direction="row" spacing={1} alignItems="center">
               <StatusChip value={task.status} />
-              <PriorityChip value={task.priority} />
+              <Box onClick={(e) => e.stopPropagation()}>
+                  <PrioritySelector
+                    task={task}
+                    actingUser={actingUser}
+                    onSuccess={(message, updatedTask) => {
+                      if (onPriorityUpdate) onPriorityUpdate(message, updatedTask);
+                    }}
+                    onError={(error) => {
+                      if (onPriorityUpdate) onPriorityUpdate(null, null, error);
+                    }}
+                    size="small"
+                  />
+                </Box>
             </Stack>
           </Stack>
           <Typography variant="caption" sx={styles.cardHint}>
@@ -103,6 +119,8 @@ export default function TasksPage() {
   const prevActingIdRef = useRef(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const queryClient = useQueryClient();
 
   const SIDEBAR_WIDTH = 240;
   const SIDEBAR_MINI_WIDTH = 80;
@@ -380,6 +398,7 @@ export default function TasksPage() {
     { key: "profile", icon: <PersonIcon />, label: "Profile" },
     { key: "settings", icon: <SettingsIcon />, label: "Settings" },
     { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
+    { key: "trash", icon: <DeleteIcon />, label: "Trash" }, 
   ];
 
   return (
@@ -389,6 +408,11 @@ export default function TasksPage() {
         onToggle={() => setIsSidebarOpen((v) => !v)}
         items={sidebarItems}
         title="DonkiBoard"
+        onItemClick={(key) => {  // ADD THIS ENTIRE onItemClick function
+          if (key === "trash") {
+            window.location.href = "/trash";
+          }
+        }}
       />
 
       <Box sx={styles.main}>
@@ -499,7 +523,16 @@ export default function TasksPage() {
                                   key={t.task_id}
                                   task={t}
                                   usersById={usersById}
+                                  actingUser={actingUser}
                                   onOpen={() => setSelectedTask(t)}
+                                  onPriorityUpdate={(message, updatedTask, error) => {
+                                    if (error) {
+                                      setSnackbar({ open: true, message: error, severity: "error" });
+                                    } else if (message) {
+                                      setSnackbar({ open: true, message, severity: "success" });
+                                      queryClient.invalidateQueries(['tasks']);
+                                    }
+                                  }}
                                 />
                               ))}
                             </Stack>
@@ -547,7 +580,16 @@ export default function TasksPage() {
                 </Typography>
                 <Stack direction="row" spacing={1}>
                   <StatusChip value={selectedTask.status} />
-                  <PriorityChip value={selectedTask.priority} />
+                  <PrioritySelector
+                    task={selectedTask}
+                    actingUser={actingUser}
+                    onSuccess={(message, updatedTask) => {
+                      setSnackbar({ open: true, message, severity: "success" });
+                      setSelectedTask(updatedTask);
+                      queryClient.invalidateQueries(['tasks']);
+                    }}
+                    onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
+                  />
                 </Stack>
               </Stack>
             </DialogTitle>
@@ -819,6 +861,18 @@ export default function TasksPage() {
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setSelectedTask(null)}>Close</Button>
+              <DeleteButton 
+                task={selectedTask} 
+                actingUserId={selectedUserId}
+                onSuccess={(message) => {
+                  setSnackbar({ open: true, message, severity: "success" });
+                  setSelectedTask(null);
+                  // Refresh tasks
+                  window.location.reload(); // Simple refresh, or use queryClient if you add it
+                  
+                }}
+                onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
+              />
             </DialogActions>
           </>
         )}
