@@ -1,4 +1,5 @@
-import { Avatar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography } from '@mui/material';
+import { Avatar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Button } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuIcon from '@mui/icons-material/Menu';
 
@@ -6,6 +7,28 @@ const SIDEBAR_WIDTH = 240;
 const SIDEBAR_MINI_WIDTH = 80;
 
 export default function Sidebar({ open = true, onToggle, items = [], title = 'DonkiBoard' }) {
+  // ...existing code...
+  const handleChangePassword = () => {
+    navigate('/change-password');
+  };
+  const navigate = useNavigate();
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const email = user.email || '';
+  // Try user.profile.role, fallback to user.role, else show 'No role found'
+  let role = '';
+  if (user.profile && user.profile.role) {
+    role = user.profile.role;
+  } else if (user.role) {
+    role = user.role;
+  } else {
+    role = 'No role found';
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('user');
+    navigate('/');
+  };
+
   return (
     <Drawer
       variant="permanent"
@@ -57,6 +80,24 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
           </ListItemButton>
         ))}
       </List>
+      <Box sx={{ flexGrow: 1 }} />
+      <Box sx={{ px: 2, pb: 2, pt: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
+        <Box sx={{ mb: 1, width: '100%' }}>
+          <Typography variant="body2" color="inherit" sx={{ fontWeight: 500, wordBreak: 'break-all' }}>
+            {email}
+          </Typography>
+          <Typography variant="caption" color="inherit" sx={{ opacity: 0.8 }}>
+            {role}
+          </Typography>
+        </Box>
+        <Divider sx={{ width: '100%', mb: 1 }} />
+        <Button variant="outlined" color="inherit" size="small" fullWidth sx={{ alignSelf: 'center', mb: 1 }} onClick={handleChangePassword}>
+          Change Password
+        </Button>
+        <Button variant="outlined" color="inherit" size="small" fullWidth sx={{ alignSelf: 'center' }} onClick={handleLogout}>
+          Log Out
+        </Button>
+      </Box>
     </Drawer>
   );
 }

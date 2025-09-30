@@ -5,6 +5,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 
 const routes = require('./routes');
+const authRouter = require('./routes/auth');
 const logger = require('./utils/logger');
 const { env } = require('./config/env');
 
@@ -20,6 +21,7 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api', routes);
+app.use('/api/auth', authRouter);
 
 const port = env.PORT || 4000;
 app.listen(port, () => {
