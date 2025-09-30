@@ -44,6 +44,7 @@ import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import DeleteButton from '../components/DeleteButton';
 import PrioritySelector from '../components/PrioritySelector';
+import TaskForm from '../components/TaskForm';
 
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
@@ -153,7 +154,7 @@ function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
   );
 }
 
-function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate }) {
+function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAddSubtask }) {
   // owner/members prepared if you want to display later
   void usersById;
 
@@ -167,6 +168,29 @@ function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate }) {
               <PriorityChip value={task.priority} />
             </Stack>
             <Typography variant="h6">{task.title}</Typography>
+            {/* Add Subtask button */}
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent card click
+                onAddSubtask(task);
+              }}
+              sx={{
+                mt: 1,
+                textTransform: "none",
+                fontSize: "0.75rem",
+                borderColor: "#6A11CB",
+                color: "#6A11CB",
+                "&:hover": {
+                  borderColor: "#4E54C8",
+                  backgroundColor: "rgba(106,17,203,0.04)",
+                },
+              }}
+            >
+              Add Subtask
+            </Button>
           </Stack>
           <Typography variant="caption" sx={styles.cardHint}>
             Click to view details
@@ -183,12 +207,60 @@ export default function TasksPage() {
   const prevActingIdRef = useRef(null);
   const [selectedTask, setSelectedTask] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isTaskFormOpen, setIsTaskFormOpen] = useState(false);
+  const [selectedTaskForSubtask, setSelectedTaskForSubtask] = useState(null);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
 
   const queryClient = useQueryClient();
 
   const SIDEBAR_WIDTH = 240;
   const SIDEBAR_MINI_WIDTH = 80;
+
+  // // Fetch users for the task form
+  // useEffect(() => {
+  //   const fetchUsers = async () => {
+  //     try {
+  //       const response = await fetch('/api/users');
+  //       const result = await response.json();
+  //       setUsers(result.data || []);
+  //     } catch (error) {
+  //       console.error('Error fetching users:', error);
+  //     }
+  //   };
+  //   fetchUsers();
+  // }, []);
+
+
+  const handleTaskCreated = (newTask) => {
+    // Refresh tasks after creation
+    queryClient.invalidateQueries(['tasks']);
+    setIsTaskFormOpen(false);
+    setSelectedTaskForSubtask(null);
+
+  // Show success message
+    setSnackbar({
+      open: true,
+      message: selectedTaskForSubtask 
+        ? `Subtask "${newTask.title}" created successfully!`
+        : `Task "${newTask.title}" created successfully!`,
+      severity: "success"
+    });
+  };
+
+
+  const openSubtaskForm = (task) => {
+    setSelectedTaskForSubtask(task);
+    setIsTaskFormOpen(true);
+    setIsSearchFocused(false); // Unfocus search bar
+    
+  };
+
+  const openTaskForm = () => {
+    setSelectedTaskForSubtask(null);
+    setIsTaskFormOpen(true);
+    setIsSearchFocused(false); // Unfocus search bar
+  };
 
   // Pagination for task list
   const [page, setPage] = useState(0);
@@ -305,8 +377,11 @@ export default function TasksPage() {
 
   const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
   const tasksByStatus = useMemo(() => {
-    const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
-    for (const t of tasks) {
+  const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
+  // Only show parent tasks (tasks without parent_task_id)
+
+  const parentTasks = tasks.filter(task => !task.parent_task_id);
+    for (const t of parentTasks) {
       if (t.status === "IN_PROGRESS") group.IN_PROGRESS.push(t);
       else if (t.status === "DONE") group.DONE.push(t);
       else group.TO_DO.push(t);
@@ -606,6 +681,7 @@ export default function TasksPage() {
                                   usersById={usersById}
                                   actingUser={actingUser}
                                   onOpen={() => setSelectedTask(t)}
+                                  onAddSubtask={openSubtaskForm}
                                   onPriorityUpdate={(message, updatedTask, error) => {
                                     if (error) {
                                       setSnackbar({ open: true, message: error, severity: "error" });
@@ -645,7 +721,6 @@ export default function TasksPage() {
                       </Button>
                     </Stack>
                   )}
-
                   <Box sx={styles.addTaskFabWrapper} className="rainbow-border">
                     <Button
                       variant="contained"
@@ -653,7 +728,7 @@ export default function TasksPage() {
                       startIcon={<AddIcon />}
                       sx={styles.addTaskButton}
                       disabled={!actingUser}
-                    >
+                      onClick = {openTaskForm}>
                       Add task
                     </Button>
                   </Box>
@@ -705,7 +780,25 @@ export default function TasksPage() {
                     }}
                     onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
                   />
-
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      openSubtaskForm(selectedTask);
+                    }}
+                    sx={{
+                      textTransform: "none",
+                      borderColor: "#6A11CB",
+                      color: "#6A11CB",
+                      "&:hover": {
+                        borderColor: "#4E54C8",
+                        backgroundColor: "rgba(106,17,203,0.04)",
+                      },
+                    }}
+                  >
+                    Add Subtask
+                  </Button>
                 </Stack>
               </Stack>
             </DialogTitle>
@@ -896,7 +989,8 @@ export default function TasksPage() {
                   setSnackbar({ open: true, message, severity: "success" });
                   setSelectedTask(null);
                   // Refresh tasks
-                  window.location.reload(); // Simple refresh, or use queryClient if you add it
+                  // window.location.reload(); // Simple refresh, or use queryClient if you add it
+                  queryClient.invalidateQueries(['tasks']); //replaces window reload
                   
                 }}
                 onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
@@ -905,6 +999,19 @@ export default function TasksPage() {
           </>
         )}
       </Dialog>
+
+      {/* Task Form Modal */}
+      <TaskForm
+        isOpen={isTaskFormOpen}
+        onClose={() => {
+          setIsTaskFormOpen(false);
+          setSelectedTaskForSubtask(null);
+        }}
+        onSubmit={handleTaskCreated}
+        parentTask={selectedTaskForSubtask}
+        users={users}
+        actingUserId={actingUser?.user_id}
+      />
 
       <Snackbar
         open={snackbar.open}
@@ -1069,4 +1176,26 @@ const styles = {
     pl: 1,
     borderLeft: "1px dashed #e0e0e0",
   },
+
+  taskCard: {
+    borderRadius: 2,
+    borderColor: "#d9d9d9",
+    boxShadow: "0 2px 8px rgba(106,17,203,0.10)",
+    transition: "transform 120ms ease, box-shadow 120ms ease",
+    "&:hover": {
+      boxShadow: "0 6px 16px rgba(78,84,200,0.20)",
+      transform: "translateY(-1px)",
+      borderColor: "#d5c6ff",
+    },
+  },
+
+  taskCardAction: { 
+    borderRadius: 2,
+    alignItems: "flex-start",
+  },
+  taskCardContent: { 
+    p: 2,
+    "&:last-child": { pb: 2 },
+  },
+
 };

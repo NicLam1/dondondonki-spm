@@ -110,6 +110,263 @@ router.get('/tasks', async (req, res) => {
   res.json({ data });
 });
 
+// Create a new task (POST /tasks)
+router.post('/tasks', async (req, res) => {
+  const { 
+    title, 
+    description, 
+    status = 'TO_DO', 
+    priority = 'MEDIUM', 
+    due_date, 
+    project, 
+    owner_id, 
+    members_id = [], 
+    parent_task_id = null,
+    acting_user_id 
+  } = req.body;
+
+  if (!title || !owner_id || !acting_user_id) {
+    return res.status(400).json({ 
+      error: 'Missing required fields: title, owner_id, and acting_user_id are required' 
+    });
+  }
+
+  // Validate status and priority
+  const validStatuses = ['TO_DO', 'IN_PROGRESS', 'DONE'];
+  const validPriorities = ['HIGH', 'MEDIUM', 'LOW'];
+  
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ error: 'Invalid status. Must be TO_DO, IN_PROGRESS, or DONE' });
+  }
+  
+  if (!validPriorities.includes(priority)) {
+    return res.status(400).json({ error: 'Invalid priority. Must be HIGH, MEDIUM, or LOW' });
+  }
+
+  // Load acting user to check permissions
+  const { data: actingUser, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', acting_user_id)
+    .single();
+  
+  if (actingErr) {
+    return res.status(500).json({ error: 'Failed to verify acting user' });
+  }
+  if (!actingUser) {
+    return res.status(404).json({ error: 'Acting user not found' });
+  }
+
+  // Check if acting user can create task for the specified owner
+  if (owner_id !== acting_user_id) {
+    // Load target owner to check access level
+    const { data: targetOwner, error: ownerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', owner_id)
+      .single();
+    
+    if (ownerErr) {
+      return res.status(500).json({ error: 'Failed to verify target owner' });
+    }
+    if (!targetOwner) {
+      return res.status(404).json({ error: 'Target owner not found' });
+    }
+
+    // Acting user can only create tasks for users with lower access level
+    if (actingUser.access_level <= targetOwner.access_level) {
+      return res.status(403).json({ error: 'Insufficient permissions to create task for this user' });
+    }
+  }
+
+  // If parent_task_id is provided, verify it exists and check permissions
+  if (parent_task_id) {
+    const { data: parentTask, error: parentErr } = await supabase
+      .from('tasks')
+      .select('task_id, owner_id')
+      .eq('task_id', parent_task_id)
+      .eq('is_deleted', false)
+      .single();
+    
+    if (parentErr) {
+      return res.status(500).json({ error: 'Failed to verify parent task' });
+    }
+    if (!parentTask) {
+      return res.status(404).json({ error: 'Parent task not found' });
+    }
+  }
+
+  // Create the task
+  const { data: newTask, error: createErr } = await supabase
+    .from('tasks')
+    .insert({
+      title,
+      description,
+      status,
+      priority,
+      due_date,
+      project,
+      owner_id,
+      members_id,
+      parent_task_id,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .select()
+    .single();
+
+  if (createErr) {
+    return res.status(500).json({ error: 'Failed to create task', details: createErr.message });
+  }
+
+  return res.json({ 
+    success: true, 
+    message: `Task "${title}" created successfully`,
+    data: newTask
+  });
+});
+
+// Create a subtask (POST /tasks/:id/subtask)
+router.post('/tasks/:id/subtask', async (req, res) => {
+  const parentTaskId = parseInt(req.params.id, 10);
+  const { 
+    title, 
+    description, 
+    status = 'TO_DO', 
+    priority = 'MEDIUM', 
+    due_date, 
+    project, 
+    owner_id, 
+    members_id = [], 
+    acting_user_id 
+  } = req.body;
+
+  if (Number.isNaN(parentTaskId)) {
+    return res.status(400).json({ error: 'Invalid parent task ID' });
+  }
+
+  if (!title || !owner_id || !acting_user_id) {
+    return res.status(400).json({ 
+      error: 'Missing required fields: title, owner_id, and acting_user_id are required' 
+    });
+  }
+
+  // Validate status and priority
+  const validStatuses = ['TO_DO', 'IN_PROGRESS', 'DONE'];
+  const validPriorities = ['HIGH', 'MEDIUM', 'LOW'];
+  
+  if (!validStatuses.includes(status)) {
+    return res.status(400).json({ error: 'Invalid status. Must be TO_DO, IN_PROGRESS, or DONE' });
+  }
+  
+  if (!validPriorities.includes(priority)) {
+    return res.status(400).json({ error: 'Invalid priority. Must be HIGH, MEDIUM, or LOW' });
+  }
+
+  // Load acting user to check permissions
+  const { data: actingUser, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', acting_user_id)
+    .single();
+  
+  if (actingErr) {
+    return res.status(500).json({ error: 'Failed to verify acting user' });
+  }
+  if (!actingUser) {
+    return res.status(404).json({ error: 'Acting user not found' });
+  }
+
+  // Verify parent task exists and check permissions
+  const { data: parentTask, error: parentErr } = await supabase
+    .from('tasks')
+    .select('task_id, title, owner_id, project')
+    .eq('task_id', parentTaskId)
+    .eq('is_deleted', false)
+    .single();
+  
+  if (parentErr) {
+    return res.status(500).json({ error: 'Failed to verify parent task' });
+  }
+  if (!parentTask) {
+    return res.status(404).json({ error: 'Parent task not found' });
+  }
+
+  // Check if acting user can create subtask (must be owner or have higher access level than parent task owner)
+  if (parentTask.owner_id !== acting_user_id) {
+    const { data: parentOwner, error: parentOwnerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', parentTask.owner_id)
+      .single();
+    
+    if (parentOwnerErr) {
+      return res.status(500).json({ error: 'Failed to verify parent task owner' });
+    }
+    if (!parentOwner) {
+      return res.status(404).json({ error: 'Parent task owner not found' });
+    }
+
+    if (actingUser.access_level <= parentOwner.access_level) {
+      return res.status(403).json({ error: 'Insufficient permissions to create subtask for this task' });
+    }
+  }
+
+  // If subtask owner is different from acting user, check permissions
+  if (owner_id !== acting_user_id) {
+    const { data: targetOwner, error: ownerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', owner_id)
+      .single();
+    
+    if (ownerErr) {
+      return res.status(500).json({ error: 'Failed to verify target owner' });
+    }
+    if (!targetOwner) {
+      return res.status(404).json({ error: 'Target owner not found' });
+    }
+
+    if (actingUser.access_level <= targetOwner.access_level) {
+      return res.status(403).json({ error: 'Insufficient permissions to create task for this user' });
+    }
+  }
+
+  // Inherit project from parent task if not specified
+  const taskProject = project || parentTask.project;
+
+  // Create the subtask
+  const { data: newSubtask, error: createErr } = await supabase
+    .from('tasks')
+    .insert({
+      title,
+      description,
+      status,
+      priority,
+      due_date,
+      project: taskProject,
+      owner_id,
+      members_id,
+      parent_task_id: parentTaskId,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    })
+    .select()
+    .single();
+
+  if (createErr) {
+    return res.status(500).json({ error: 'Failed to create subtask', details: createErr.message });
+  }
+
+  return res.json({ 
+    success: true, 
+    message: `Subtask "${title}" created successfully under "${parentTask.title}"`,
+    data: newSubtask
+  });
+});
+
 // Get deleted tasks (Trash view)
 router.get('/tasks/deleted', async (req, res) => {
   console.log('🔥 /tasks/deleted route HIT!'); // ADD THIS AS THE VERY FIRST LINE
