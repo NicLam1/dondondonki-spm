@@ -1,7 +1,6 @@
 const required = [
   'SUPABASE_URL',
   'SUPABASE_ANON_KEY',
-  'SUPABASE_SERVICE_ROLE_KEY'
 ];
 
 const env = {
@@ -12,7 +11,6 @@ const env = {
   REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
-  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   SMTP_HOST: process.env.SMTP_HOST,
   SMTP_PORT: process.env.SMTP_PORT,
   SMTP_USER: process.env.SMTP_USER,
