@@ -89,11 +89,9 @@ function PriorityChip({ value }) {
   return <Chip label={value} color={color} variant="outlined" size="small" />;
 }
 
-// Editable status chip (dropdown)
+// Editable status dropdown (explicit Select control)
 const STATUS_OPTIONS = ["TO_DO", "IN_PROGRESS", "DONE"];
 function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
-  const [anchorEl, setAnchorEl] = useState(null);
-  const open = Boolean(anchorEl);
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
@@ -104,58 +102,39 @@ function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
         body: { status: newStatus },
       }),
     onMutate: async (newStatus) => {
-      // Optimistic update
       onLocalUpdate?.({ ...task, status: newStatus });
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       return {};
     },
-    onError: (_err, _vars, _ctx) => {
-      // Let query invalidation refresh the truth
-    },
+    onError: () => {},
     onSuccess: () => {
-      // Refresh queries that show this task
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
       queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
     },
   });
 
-  const handleClick = (e) => setAnchorEl(e.currentTarget);
-  const handleClose = () => setAnchorEl(null);
-  const handleChange = (val) => {
-    handleClose();
+  const handleChange = (e) => {
+    const val = e.target.value;
     if (val && val !== task.status) mutation.mutate(val);
   };
 
-  const chipColor =
-    task.status === "DONE"
-      ? "success"
-      : task.status === "IN_PROGRESS"
-      ? "warning"
-      : "default";
-
   return (
-    <>
-      <Chip
-        label={task.status}
-        color={chipColor}
-        variant="outlined"
-        size="small"
-        onClick={handleClick}
-        sx={{ cursor: "pointer" }}
-      />
-      <Menu anchorEl={anchorEl} open={open} onClose={handleClose}>
+    <FormControl size="small" sx={{ minWidth: 140 }}>
+      <InputLabel id={`status-label-${task.task_id}`}>Status</InputLabel>
+      <Select
+        labelId={`status-label-${task.task_id}`}
+        value={task.status}
+        label="Status"
+        onChange={handleChange}
+      >
         {STATUS_OPTIONS.map((s) => (
-          <MenuItem
-            key={s}
-            selected={s === task.status}
-            onClick={() => handleChange(s)}
-          >
+          <MenuItem key={s} value={s}>
             {s}
           </MenuItem>
         ))}
-      </Menu>
-    </>
+      </Select>
+    </FormControl>
   );
 }
 
@@ -166,17 +145,12 @@ function TaskCard({ task, usersById, onOpen }) {
     <Card variant="outlined" sx={styles.taskCard}>
       <CardActionArea onClick={onOpen} sx={styles.taskCardAction}>
         <CardContent sx={styles.taskCardContent}>
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Typography variant="h6">{task.title}</Typography>
+          <Stack spacing={1} alignItems="flex-start">
             <Stack direction="row" spacing={1} alignItems="center">
               <StatusChip value={task.status} />
               <PriorityChip value={task.priority} />
             </Stack>
+            <Typography variant="h6">{task.title}</Typography>
           </Stack>
           <Typography variant="caption" sx={styles.cardHint}>
             Click to view details
@@ -700,9 +674,7 @@ export default function TasksPage() {
                   Hierarchy
                 </Typography>
                 {ancestorChain.length === 0 && (!subtree || subtree.length === 0) ? (
-                  <Typography variant="caption" color="text.secondary">
-                    No hierarchy
-                  </Typography>
+                  <Typography variant="body2" color="text.secondary">None</Typography>
                 ) : (
                   <Stack spacing={1}>
                     {(() => {
@@ -829,61 +801,15 @@ export default function TasksPage() {
                 </Stack>
               </Box>
 
-              <Divider sx={styles.dialogDivider} />
-
-              <Box sx={styles.dialogSection}>
-                <Typography variant="overline" sx={styles.dialogSectionTitle}>
-                  Meta
-                </Typography>
-                <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Task ID
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.task_id}
-                    </Typography>
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Parent
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.parent_task_id ?? "—"}
-                    </Typography>
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Deleted
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.is_deleted ? "Yes" : "No"}
-                    </Typography>
-                  </Box>
-                </Stack>
-                <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Created
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.created_at
-                        ? new Date(selectedTask.created_at).toLocaleString()
-                        : "—"}
-                    </Typography>
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Updated
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.updated_at
-                        ? new Date(selectedTask.updated_at).toLocaleString()
-                        : "—"}
-                    </Typography>
-                  </Box>
-                </Stack>
-              </Box>
+              {/**
+               * Meta section commented out per request
+               *
+               * <Divider sx={styles.dialogDivider} />
+               * <Box sx={styles.dialogSection}>
+               *   <Typography variant="overline" sx={styles.dialogSectionTitle}>Meta</Typography>
+               *   ...
+               * </Box>
+               */}
 
               <Divider sx={styles.dialogDivider} />
 
