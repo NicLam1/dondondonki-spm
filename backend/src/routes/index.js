@@ -3,7 +3,12 @@ const { createClient } = require('@supabase/supabase-js');
 const { env } = require('../config/env');
 
 const router = Router();
-const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
+
+const supabase = createClient(
+  env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY
+);
+
 
 
 router.get('/users', async (req, res) => {
@@ -292,6 +297,7 @@ router.get('/tasks/:id/descendants', async (req, res) => {
 
 
 
+
 // Update task priority (PUT /tasks/:id/priority) - Manager/Director only
 router.put('/tasks/:id/priority', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
@@ -497,6 +503,72 @@ router.post('/tasks/:id/restore', async (req, res) => {
 });
 
 
+router.patch('/tasks/:id/status', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+  const { status } = req.body || {};
+  const allowed = new Set(['TO_DO', 'IN_PROGRESS', 'DONE']);
+
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+  if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
+  if (!allowed.has(status)) return res.status(400).json({ error: 'Invalid status' });
+
+  // Load acting user
+  const { data: acting, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', actingUserId)
+    .maybeSingle();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  // Load task
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('task_id', id)
+    .eq('is_deleted', false)
+    .maybeSingle();
+  if (taskErr) return res.status(500).json({ error: taskErr.message });
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Owner to compare
+  const { data: owner, error: ownerErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', task.owner_id)
+    .maybeSingle();
+  if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+  const isOwner = task.owner_id === actingUserId;
+  const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
+  const outranksOwner = owner && acting.access_level > owner.access_level;
+  const canEdit = isOwner || isMember || outranksOwner;
+  if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
+
+  // --- Two-step update to avoid 406 / “single JSON object” ---
+  // 1) Update (no returning rows)
+  const { error: updErr } = await supabase
+    .from('tasks')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('task_id', id);
+  if (updErr) return res.status(500).json({ error: updErr.message });
+
+  // 2) Read back exactly one row
+  const { data: updated, error: getErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('task_id', id)
+    .order('task_id', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!updated) return res.status(404).json({ error: 'Task not found after update' });
+
+  return res.json({ data: updated });
+});
+
 module.exports = router;
+
 
 
