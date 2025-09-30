@@ -5,7 +5,6 @@ import {
   Select,
   MenuItem,
   CircularProgress,
-  Chip,
   Box,
   Tooltip
 } from '@mui/material';
@@ -26,9 +25,9 @@ const PrioritySelector = ({
   const canChangePriority = actingUser && actingUser.access_level > 0;
   
   const priorities = [
-    { value: 'HIGH', label: 'High', color: 'error' },
-    { value: 'MEDIUM', label: 'Medium', color: 'warning' },
-    { value: 'LOW', label: 'Low', color: 'default' }
+    { value: 'HIGH', label: 'HIGH' },
+    { value: 'MEDIUM', label: 'MEDIUM' },
+    { value: 'LOW', label: 'LOW' }
   ];
 
   const handlePriorityChange = async (event) => {
@@ -69,15 +68,13 @@ const PrioritySelector = ({
     }
   };
 
-  // ...existing code...
-
   const dropdown = (
-    <Box sx={{ display: 'inline-flex', alignItems: 'center', minWidth: 80 }}>
+    <Box sx={{ display: 'inline-flex', alignItems: 'center', minWidth: 140 }}>
       <FormControl 
         size={size} 
         fullWidth
         disabled={loading || disabled || !canChangePriority}
-        sx={{ minWidth: 80 }}
+        sx={{ minWidth: 140 }}
       >
         <InputLabel sx={{ fontSize: '0.875rem' }}>Priority</InputLabel>
         <Select
@@ -91,28 +88,10 @@ const PrioritySelector = ({
               fontSize: '0.875rem'
             }
           }}
-          renderValue={(value) => {
-            const priority = priorities.find(p => p.value === value);
-            return (
-              <Chip 
-                label={priority?.label || 'Low'} 
-                color={priority?.color || 'default'} 
-                variant="outlined" 
-                size="small"
-                sx={{ height: 20, fontSize: '0.75rem' }}
-              />
-            );
-          }}
         >
           {priorities.map((priority) => (
-            <MenuItem key={priority.value} value={priority.value}>
-              <Chip 
-                label={priority.label} 
-                color={priority.color} 
-                variant="outlined" 
-                size="small"
-                sx={{ height: 20, fontSize: '0.75rem' }}
-              />
+            <MenuItem key={priority.value} value={priority.value} sx={{ fontSize: '0.875rem' }}>
+              {priority.label}
             </MenuItem>
           ))}
         </Select>
@@ -122,8 +101,6 @@ const PrioritySelector = ({
       )}
     </Box>
   );
-
-// ...existing code...
 
   // If user doesn't have authority, wrap in tooltip
   if (!canChangePriority) {

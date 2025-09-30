@@ -98,11 +98,11 @@ function PriorityChip({ value }) {
 }
 
 
-function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate  }) {
-  const owner = usersById.get(task.owner_id);
-  const members = (task.members_id || [])
-    .map((id) => usersById.get(id))
-    .filter(Boolean);
+// function TaskCard({ task, usersById, onOpen}) {
+//   const owner = usersById.get(task.owner_id);
+//   const members = (task.members_id || [])
+//     .map((id) => usersById.get(id))
+//     .filter(Boolean);}
 
 // Editable status dropdown (explicit Select control)
 const STATUS_OPTIONS = ["TO_DO", "IN_PROGRESS", "DONE"];
@@ -153,7 +153,7 @@ function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
   );
 }
 
-function TaskCard({ task, usersById, onOpen }) {
+function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate }) {
   // owner/members prepared if you want to display later
   void usersById;
 
@@ -164,19 +164,7 @@ function TaskCard({ task, usersById, onOpen }) {
           <Stack spacing={1} alignItems="flex-start">
             <Stack direction="row" spacing={1} alignItems="center">
               <StatusChip value={task.status} />
-              <Box onClick={(e) => e.stopPropagation()}>
-                  <PrioritySelector
-                    task={task}
-                    actingUser={actingUser}
-                    onSuccess={(message, updatedTask) => {
-                      if (onPriorityUpdate) onPriorityUpdate(message, updatedTask);
-                    }}
-                    onError={(error) => {
-                      if (onPriorityUpdate) onPriorityUpdate(null, null, error);
-                    }}
-                    size="small"
-                  />
-                </Box>
+              <PriorityChip value={task.priority} />
             </Stack>
             <Typography variant="h6">{task.title}</Typography>
           </Stack>
@@ -699,7 +687,14 @@ export default function TasksPage() {
                 </Typography>
                 <Stack direction="row" spacing={1}>
 
-                  <StatusChip value={selectedTask.status} />
+                  <StatusChipEditable
+                    task={selectedTask}
+                    actingUserId={actingUser?.user_id}
+                    onLocalUpdate={(updatedTask) => {
+                      setSelectedTask(updatedTask);
+                      queryClient.invalidateQueries(['tasks']);
+                    }}
+                  />
                   <PrioritySelector
                     task={selectedTask}
                     actingUser={actingUser}
