@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   FormControl,
   InputLabel,
@@ -6,7 +6,8 @@ import {
   MenuItem,
   CircularProgress,
   Chip,
-  Box
+  Box,
+  Tooltip
 } from '@mui/material';
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
@@ -20,8 +21,6 @@ const PrioritySelector = ({
   size = "small"
 }) => {
   const [loading, setLoading] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const selectRef = useRef(null);
   
   // Check if user can change priority (manager/director only)
   const canChangePriority = actingUser && actingUser.access_level > 0;
@@ -32,20 +31,10 @@ const PrioritySelector = ({
     { value: 'LOW', label: 'Low', color: 'default' }
   ];
 
-  const currentPriority = priorities.find(p => p.value === task?.priority) || priorities[2];
-
-  // Auto-focus the select when editing starts
-  useEffect(() => {
-    if (isEditing && selectRef.current) {
-      setTimeout(() => {
-        selectRef.current.focus();
-      }, 100);
-    }
-  }, [isEditing]);
-
-  const handlePriorityChange = async (newPriority) => {
-    if (!task || !actingUser || loading || newPriority === task.priority) {
-      setIsEditing(false);
+  const handlePriorityChange = async (event) => {
+    const newPriority = event.target.value;
+    
+    if (!task || !actingUser || loading || newPriority === task.priority || !canChangePriority) {
       return;
     }
     
@@ -71,92 +60,82 @@ const PrioritySelector = ({
       if (onSuccess) {
         onSuccess(result.message, result.data);
       }
-      setIsEditing(false);
     } catch (error) {
       if (onError) {
         onError(error.message);
       }
-      setIsEditing(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleChipClick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (canChangePriority && !disabled && !loading) {
-      setIsEditing(true);
-    }
-  };
+  // ...existing code...
 
-  // If not editing, show as clickable chip
-  if (!isEditing) {
-    return (
-      <Box 
-        onClick={handleChipClick}
-        sx={{ display: 'inline-flex', alignItems: 'center' }}
+  const dropdown = (
+    <Box sx={{ display: 'inline-flex', alignItems: 'center', minWidth: 80 }}>
+      <FormControl 
+        size={size} 
+        fullWidth
+        disabled={loading || disabled || !canChangePriority}
+        sx={{ minWidth: 80 }}
       >
-        <Chip 
-          label={currentPriority.label} 
-          color={currentPriority.color} 
-          variant="outlined" 
-          size={size}
-          sx={{
-            cursor: canChangePriority && !disabled && !loading ? 'pointer' : 'default',
-            '&:hover': canChangePriority && !disabled && !loading ? {
-              backgroundColor: 'action.hover'
-            } : {}
+        <InputLabel sx={{ fontSize: '0.875rem' }}>Priority</InputLabel>
+        <Select
+          value={task?.priority || 'LOW'}
+          label="Priority"
+          onChange={handlePriorityChange}
+          sx={{ 
+            height: 32,
+            '& .MuiSelect-select': {
+              padding: '4px 8px',
+              fontSize: '0.875rem'
+            }
           }}
-          disabled={loading}
-        />
-        {loading && (
-          <CircularProgress size={16} sx={{ ml: 1 }} />
-        )}
-      </Box>
+          renderValue={(value) => {
+            const priority = priorities.find(p => p.value === value);
+            return (
+              <Chip 
+                label={priority?.label || 'Low'} 
+                color={priority?.color || 'default'} 
+                variant="outlined" 
+                size="small"
+                sx={{ height: 20, fontSize: '0.75rem' }}
+              />
+            );
+          }}
+        >
+          {priorities.map((priority) => (
+            <MenuItem key={priority.value} value={priority.value}>
+              <Chip 
+                label={priority.label} 
+                color={priority.color} 
+                variant="outlined" 
+                size="small"
+                sx={{ height: 20, fontSize: '0.75rem' }}
+              />
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+      {loading && (
+        <CircularProgress size={16} sx={{ ml: 1 }} />
+      )}
+    </Box>
+  );
+
+// ...existing code...
+
+  // If user doesn't have authority, wrap in tooltip
+  if (!canChangePriority) {
+    return (
+      <Tooltip title="Not authorised to change priority" arrow>
+        <span>{dropdown}</span>
+      </Tooltip>
     );
   }
 
-  // If editing, show dropdown
-  return (
-    <FormControl 
-      size={size} 
-      sx={{ minWidth: 100 }} 
-      disabled={loading}
-    >
-      <Select
-        ref={selectRef}
-        value={task?.priority || 'LOW'}
-        open={isEditing}
-        onClose={() => setIsEditing(false)}
-        onChange={(e) => handlePriorityChange(e.target.value)}
-        onBlur={() => setIsEditing(false)}
-        displayEmpty
-        renderValue={(value) => {
-          const priority = priorities.find(p => p.value === value);
-          return (
-            <Chip 
-              label={priority?.label || 'Low'} 
-              color={priority?.color || 'default'} 
-              variant="outlined" 
-              size="small"
-            />
-          );
-        }}
-      >
-        {priorities.map((priority) => (
-          <MenuItem key={priority.value} value={priority.value}>
-            <Chip 
-              label={priority.label} 
-              color={priority.color} 
-              variant="outlined" 
-              size="small"
-            />
-          </MenuItem>
-        ))}
-      </Select>
-    </FormControl>
-  );
+  // If user has authority, show dropdown without tooltip
+  return dropdown;
 };
 
 export default PrioritySelector;
