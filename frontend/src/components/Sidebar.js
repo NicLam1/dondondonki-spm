@@ -5,7 +5,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 const SIDEBAR_WIDTH = 240;
 const SIDEBAR_MINI_WIDTH = 80;
 
-export default function Sidebar({ open = true, onToggle, items = [], title = 'DonkiBoard', onItemClick }) {
+export default function Sidebar({ open = true, onToggle, items = [], title = 'DonkiBoard' }) {
   return (
     <Drawer
       variant="permanent"
@@ -30,7 +30,6 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
         {items.map((item) => (
           <ListItemButton
             key={item.key}
-            onClick={() => onItemClick?.(item.key)} 
             sx={{
               ...styles.drawerItemButton,
               justifyContent: open ? 'flex-start' : 'center',

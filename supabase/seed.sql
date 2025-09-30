@@ -144,8 +144,3 @@ select 'Task 15', 'Annual plan outline', 'IN_PROGRESS', 'MEDIUM', current_date +
 from (select user_id from public.users where email = 'director@example.com') u_director
 on conflict do nothing;
 
--- 6: Task with no subtasks (simple delete case)
-insert into public.tasks (title, description, status, priority, due_date, project, owner_id, members_id, is_deleted)
-select 'Simple Standalone Task to be deleted', 'No subtasks, easy to delete', 'TO_DO', 'LOW', current_date + interval '3 days', 'Simple', u_staff.user_id, array[]::integer[], false
-from (select user_id from public.users where email = 'staff@example.com') u_staff
-on conflict do nothing;
