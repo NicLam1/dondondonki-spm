@@ -24,6 +24,7 @@ import {
   Typography,
   IconButton,
   Menu,
+  TextField,
 } from "@mui/material";
 import Snackbar from "@mui/material/Snackbar";
 import Alert from "@mui/material/Alert";
@@ -192,6 +193,8 @@ export default function TasksPage() {
   const [viewUserIds, setViewUserIds] = useState([]);
   const prevActingIdRef = useRef(null);
   const [selectedTask, setSelectedTask] = useState(null);
+  const [editMode, setEditMode] = useState(false);   
+  const [draft, setDraft] = useState(null);          
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Pagination for task list
@@ -206,6 +209,9 @@ export default function TasksPage() {
   });
   const showError = (msg) =>
     setSnackbar({ open: true, message: msg, severity: "error" });
+
+  const showSuccess = (msg) =>
+  setSnackbar({ open: true, message: msg, severity: "success" }); 
 
   const { data: usersData } = useQuery({
     queryKey: ["users"],
@@ -440,6 +446,8 @@ export default function TasksPage() {
                 onClick={async () => {
                   if (accessibleTask) {
                     setSelectedTask(accessibleTask);
+                    setEditMode(false);
+                    setDraft(null);
                     return;
                   }
                   if (!canViewFullSubtree) {
@@ -450,7 +458,11 @@ export default function TasksPage() {
                     const resp = await fetchJson(`/tasks/${nodeId}`, {
                       acting_user_id: String(actingUser.user_id),
                     });
-                    if (resp && resp.data) setSelectedTask(resp.data);
+                    if (resp && resp.data) {
+                      setSelectedTask(resp.data)
+                      setEditMode(false);
+                      setDraft(null);
+                    }
                   } catch (e) {
                     showError("Unable to load task.");
                   }
@@ -479,7 +491,28 @@ export default function TasksPage() {
       })}
     </Stack>
   );
-
+  const queryClient = useQueryClient();
+  const editMutation = useMutation({
+    mutationFn: (payload) =>
+      apiJson(`/tasks/${selectedTask.task_id}`, {
+        method: "PATCH",
+        params: { acting_user_id: String(actingUser?.user_id) },
+        body: payload,
+      }),
+    onSuccess: (resp) => {
+      const updated = resp?.data;
+      if (updated) {
+        setSelectedTask(updated);
+        setEditMode(false);
+        setDraft(null);
+        queryClient.invalidateQueries({ queryKey: ["tasks"] });
+        queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
+        queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
+        showSuccess("Task updated");
+      }
+    },
+    onError: (e) => showError(e?.message || "Failed to save task"),
+  });
   const statusLabels = {
     TO_DO: "To Do",
     IN_PROGRESS: "In Progress",
@@ -601,7 +634,7 @@ export default function TasksPage() {
                                   key={t.task_id}
                                   task={t}
                                   usersById={usersById}
-                                  onOpen={() => setSelectedTask(t)}
+                                  onOpen={() => { setSelectedTask(t); setEditMode(false); setDraft(null); }}
                                 />
                               ))}
                             </Stack>
@@ -655,7 +688,7 @@ export default function TasksPage() {
       {/* Task dialog */}
       <Dialog
         open={Boolean(selectedTask)}
-        onClose={() => setSelectedTask(null)}
+        onClose={() => { setSelectedTask(null); setEditMode(false); setDraft(null); }}
         fullWidth
         maxWidth="sm"
         PaperProps={{ sx: styles.dialogPaper }}
@@ -670,9 +703,17 @@ export default function TasksPage() {
                 justifyContent="space-between"
                 sx={styles.dialogTitleRow}
               >
-                <Typography variant="h6" sx={styles.dialogTitle}>
-                  {selectedTask.title}
-                </Typography>
+                {editMode ? (
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Title"
+                    value={draft?.title ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+                  />
+                ) : (
+                  <Typography variant="h6" sx={styles.dialogTitle}>{selectedTask.title}</Typography>
+                )}
                 <Stack direction="row" spacing={1}>
                   <StatusChipEditable
                     task={selectedTask}
@@ -680,6 +721,29 @@ export default function TasksPage() {
                     onLocalUpdate={(t) => setSelectedTask(t)}
                   />
                   <PriorityChip value={selectedTask.priority} />
+                       <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          if (!editMode) {
+                            setDraft({
+                              title: selectedTask.title || "",
+                              description: selectedTask.description || "",
+                              project: selectedTask.project || "",
+                              due_date: selectedTask.due_date ? selectedTask.due_date.slice(0, 10) : "",
+                              status: selectedTask.status,
+                              members_id: Array.isArray(selectedTask.members_id) ? selectedTask.members_id : [],
+                              owner_id: selectedTask.owner_id,
+                            });
+                            setEditMode(true);
+                          } else {
+                            setEditMode(false);
+                            setDraft(null);
+                          }
+                        }}
+                      >
+                        {editMode ? "Cancel" : "Edit"}
+                      </Button>
                 </Stack>
               </Stack>
             </DialogTitle>
@@ -688,9 +752,20 @@ export default function TasksPage() {
                 <Typography variant="overline" sx={styles.dialogSectionTitle}>
                   Overview
                 </Typography>
-                <Typography variant="body1" sx={styles.dialogDescription}>
-                  {selectedTask.description || "No description."}
-                </Typography>
+                {editMode ? (
+                  <TextField
+                    fullWidth
+                    multiline
+                    minRows={3}
+                    label="Description"
+                    value={draft?.description ?? ""}
+                    onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                  />
+                ) : (
+                  <Typography variant="body1" sx={styles.dialogDescription}>
+                    {selectedTask.description || "No description."}
+                  </Typography>
+                )}
               </Box>
 
               <Divider sx={styles.dialogDivider} />
@@ -783,19 +858,39 @@ export default function TasksPage() {
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Project
                     </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.project || "—"}
-                    </Typography>
+                    {editMode ? (
+                      <TextField
+                        fullWidth
+                        size="small"
+                        value={draft?.project ?? ""}
+                        onChange={(e) => setDraft((d) => ({ ...d, project: e.target.value }))}
+                      />
+                    ) : (
+                      <Typography variant="body2" sx={styles.dialogInfoValue}>
+                        {selectedTask.project || "—"}
+                      </Typography>
+                    )}
+
                   </Box>
                   <Box sx={styles.dialogInfoItem}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Due date
                     </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.due_date
-                        ? new Date(selectedTask.due_date).toLocaleDateString()
-                        : "—"}
-                    </Typography>
+                    {editMode ? (
+                      <TextField
+                        type="date"
+                        fullWidth
+                        size="small"
+                        value={draft?.due_date ?? ""}
+                        onChange={(e) => setDraft((d) => ({ ...d, due_date: e.target.value }))}
+                        InputLabelProps={{ shrink: true }}
+                      />
+                    ) : (
+                      <Typography variant="body2" sx={styles.dialogInfoValue}>
+                        {selectedTask.due_date ? new Date(selectedTask.due_date).toLocaleDateString() : "—"}
+                      </Typography>
+                    )}
+
                   </Box>
                 </Stack>
               </Box>
@@ -811,20 +906,67 @@ export default function TasksPage() {
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Owner
                     </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {usersById.get(selectedTask.owner_id)?.full_name || "—"}
-                    </Typography>
+                    {editMode ? (
+                      <FormControl fullWidth size="small">
+                        <Select
+                          value={draft?.owner_id ?? selectedTask.owner_id}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            setDraft((d) => ({ ...d, owner_id: Number.isInteger(next) ? next : selectedTask.owner_id }));
+                          }}
+                          renderValue={(val) => usersById.get(Number(val))?.full_name || "—"}
+                        >
+                          {allowedUsers.map((u) => (
+                            <MenuItem key={u.user_id} value={String(u.user_id)}>
+                              <ListItemText primary={`${u.full_name} (${u.role})`} />
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <Typography variant="body2" sx={styles.dialogInfoValue}>
+                        {usersById.get(selectedTask.owner_id)?.full_name || "—"}
+                      </Typography>
+                    )}
                   </Box>
                   <Box sx={styles.dialogInfoItem}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Members
                     </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {(selectedTask.members_id || [])
-                        .map((id) => usersById.get(id)?.full_name)
-                        .filter(Boolean)
-                        .join(", ") || "—"}
-                    </Typography>
+                    {editMode ? (
+                      <FormControl fullWidth size="small">
+                        <Select
+                          multiple
+                          value={draft?.members_id ?? []}
+                          onChange={(e) => {
+                            const val = Array.isArray(e.target.value) ? e.target.value : [];
+                            // values from Select are strings; coerce to numbers
+                            const next = val.map((v) => Number(v)).filter((n) => Number.isInteger(n));
+                            setDraft((d) => ({ ...d, members_id: next }));
+                          }}
+                          renderValue={(selected) =>
+                            (selected || [])
+                              .map((id) => usersById.get(Number(id))?.full_name)
+                              .filter(Boolean)
+                              .join(", ") || "—"
+                          }
+                        >
+                          {Array.from(usersById.values()).map((u) => (
+                            <MenuItem key={u.user_id} value={String(u.user_id)}>
+                              <Checkbox checked={(draft?.members_id || []).includes(u.user_id)} />
+                              <ListItemText primary={`${u.full_name} (${u.role})`} />
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <Typography variant="body2" sx={styles.dialogInfoValue}>
+                        {(selectedTask.members_id || [])
+                          .map((id) => usersById.get(id)?.full_name)
+                          .filter(Boolean)
+                          .join(", ") || "—"}
+                      </Typography>
+                    )}
                   </Box>
                 </Stack>
               </Box>
@@ -910,8 +1052,35 @@ export default function TasksPage() {
               </Box>
             </DialogContent>
             <DialogActions>
-              <Button onClick={() => setSelectedTask(null)}>Close</Button>
+              {editMode ? (
+                <>
+                  <Button onClick={() => { setEditMode(false); setDraft(null); }}>
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="contained"
+                    onClick={() => {
+                      if (!actingUser) { showError("Select an acting user first."); return; }
+                      const payload = {
+                        title: draft.title,
+                        description: draft.description,
+                        project: draft.project,
+                        priority: draft.priority,
+                        due_date: draft.due_date || null, // allow clearing
+                        members_id: Array.isArray(draft.members_id) ? draft.members_id : [],
+                        owner_id: draft.owner_id,
+                      };
+                      editMutation.mutate(payload);
+                    }}
+                  >
+                    Save
+                  </Button>
+                </>
+              ) : (
+                <Button onClick={() => setSelectedTask(null)}>Close</Button>
+              )}
             </DialogActions>
+
           </>
         )}
       </Dialog>

@@ -287,6 +287,91 @@ router.patch('/tasks/:id/status', async (req, res) => {
 
   return res.json({ data: updated });
 });
+
+
+// NEW: general edit endpoint for multiple fields
+router.patch('/tasks/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+  if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  // NEW: accept only whitelisted fields
+  const body = req.body || {};
+  const allowedStatus = new Set(['TO_DO', 'IN_PROGRESS', 'DONE']);
+  const allowedPriority = new Set(['LOW', 'MEDIUM', 'HIGH']);
+
+  const patch = {};
+  if (typeof body.title === 'string') patch.title = body.title.trim();
+  if (typeof body.description === 'string') patch.description = body.description;
+  if (typeof body.project === 'string') patch.project = body.project.trim();
+  if (body.status && allowedStatus.has(body.status)) patch.status = body.status;
+  if (body.priority && allowedPriority.has(body.priority)) patch.priority = body.priority;
+  if (body.due_date) patch.due_date = body.due_date; // ISO date string
+  if (body.parent_task_id === null || Number.isInteger(body.parent_task_id)) patch.parent_task_id = body.parent_task_id;
+  if (Array.isArray(body.members_id)) patch.members_id = body.members_id.filter((n) => Number.isInteger(n));
+  if (Number.isInteger(body.owner_id)) patch.owner_id = body.owner_id;
+
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'No editable fields provided' });
+  }
+  patch.updated_at = new Date().toISOString();
+
+  // NEW: reuse the same access checks as status update
+  const { data: acting, error: actingErr } = await supabase
+    .from('users').select('user_id, access_level').eq('user_id', actingUserId).maybeSingle();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks').select('*').eq('task_id', id).eq('is_deleted', false).maybeSingle();
+  if (taskErr) return res.status(500).json({ error: taskErr.message });
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { data: owner, error: ownerErr } = await supabase
+    .from('users').select('user_id, access_level').eq('user_id', task.owner_id).maybeSingle();
+  if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+  const isOwner = task.owner_id === actingUserId;
+  const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
+  const outranksOwner = owner && acting.access_level > owner.access_level;
+  const canEdit = isOwner || isMember || outranksOwner;
+  if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
+  if (patch.owner_id != null && patch.owner_id !== task.owner_id) {
+    const { data: newOwner, error: newOwnerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', patch.owner_id)
+      .maybeSingle();
+    if (newOwnerErr) return res.status(500).json({ error: newOwnerErr.message });
+    if (!newOwner) return res.status(400).json({ error: 'New owner not found' });
+
+    // Policy: acting user can assign to self OR to users they outrank
+    const canAssign =
+      acting.user_id === newOwner.user_id ||
+      (typeof acting.access_level === 'number' &&
+      typeof newOwner.access_level === 'number' &&
+      acting.access_level > newOwner.access_level);
+
+    if (!canAssign) {
+      return res.status(403).json({ error: 'Forbidden: cannot assign owner with equal/higher access' });
+    }
+  }
+  // NEW: two-step update (no returning rows) + read back one
+  const { error: updErr } = await supabase.from('tasks').update(patch).eq('task_id', id);
+  if (updErr) return res.status(500).json({ error: updErr.message });
+
+  const { data: updated, error: getErr } = await supabase
+    .from('tasks').select('*').eq('task_id', id).order('task_id', { ascending: true }).limit(1).maybeSingle();
+  if (getErr) return res.status(500).json({ error: getErr.message });
+  if (!updated) return res.status(404).json({ error: 'Task not found after update' });
+
+  return res.json({ data: updated });
+});
+
+
+
+
 module.exports = router;
 
 
