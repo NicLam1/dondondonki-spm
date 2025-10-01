@@ -49,10 +49,19 @@ export default function AuthPage({ onAuth }) {
         }
         return;
       }
+      // Store session in localStorage
       localStorage.setItem("user", JSON.stringify({
         ...data.user,
         ...(data.profile ? { profile: data.profile } : {})
       }));
+
+      // Store session in cookie (expires in 7 days)
+      const cookieValue = encodeURIComponent(JSON.stringify({
+        ...data.user,
+        ...(data.profile ? { profile: data.profile } : {})
+      }));
+      document.cookie = `user=${cookieValue}; path=/; max-age=${60 * 60 * 24 * 7}`;
+
       if (onAuth) onAuth({
         ...data.user,
         ...(data.profile ? { profile: data.profile } : {})
