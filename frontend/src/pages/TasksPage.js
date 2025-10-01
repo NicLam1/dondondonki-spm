@@ -35,9 +35,18 @@ import MailIcon from "@mui/icons-material/Mail";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddIcon from "@mui/icons-material/Add";
+import DeleteIcon from "@mui/icons-material/Delete"; // ADD THIS LINE
+// import MenuOpenIcon from '@mui/icons-material/MenuOpen';
+// import MenuIcon from '@mui/icons-material/Menu';
+
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
+import DeleteButton from '../components/DeleteButton';
+import PrioritySelector from '../components/PrioritySelector';
+import TaskForm from '../components/TaskForm';
+
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
@@ -90,11 +99,16 @@ function PriorityChip({ value }) {
   return <Chip label={value} color={color} variant="outlined" size="small" />;
 }
 
-// Editable status chip (dropdown)
+
+// function TaskCard({ task, usersById, onOpen}) {
+//   const owner = usersById.get(task.owner_id);
+//   const members = (task.members_id || [])
+//     .map((id) => usersById.get(id))
+//     .filter(Boolean);}
+
+// Editable status dropdown (explicit Select control)
 const STATUS_OPTIONS = ["TO_DO", "IN_PROGRESS", "DONE"];
 function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
-  const [anchorEl, setAnchorEl] = useState(null);
-  const open = Boolean(anchorEl);
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
@@ -105,79 +119,79 @@ function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
         body: { status: newStatus },
       }),
     onMutate: async (newStatus) => {
-      // Optimistic update
       onLocalUpdate?.({ ...task, status: newStatus });
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       return {};
     },
-    onError: (_err, _vars, _ctx) => {
-      // Let query invalidation refresh the truth
-    },
+    onError: () => {},
     onSuccess: () => {
-      // Refresh queries that show this task
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
       queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
     },
   });
 
-  const handleClick = (e) => setAnchorEl(e.currentTarget);
-  const handleClose = () => setAnchorEl(null);
-  const handleChange = (val) => {
-    handleClose();
+  const handleChange = (e) => {
+    const val = e.target.value;
     if (val && val !== task.status) mutation.mutate(val);
   };
 
-  const chipColor =
-    task.status === "DONE"
-      ? "success"
-      : task.status === "IN_PROGRESS"
-      ? "warning"
-      : "default";
-
   return (
-    <>
-      <Chip
-        label={task.status}
-        color={chipColor}
-        variant="outlined"
-        size="small"
-        onClick={handleClick}
-        sx={{ cursor: "pointer" }}
-      />
-      <Menu anchorEl={anchorEl} open={open} onClose={handleClose}>
+    <FormControl size="small" sx={{ minWidth: 140 }}>
+      <InputLabel id={`status-label-${task.task_id}`}>Status</InputLabel>
+      <Select
+        labelId={`status-label-${task.task_id}`}
+        value={task.status}
+        label="Status"
+        onChange={handleChange}
+      >
         {STATUS_OPTIONS.map((s) => (
-          <MenuItem
-            key={s}
-            selected={s === task.status}
-            onClick={() => handleChange(s)}
-          >
+          <MenuItem key={s} value={s}>
             {s}
           </MenuItem>
         ))}
-      </Menu>
-    </>
+      </Select>
+    </FormControl>
   );
 }
 
-function TaskCard({ task, usersById, onOpen }) {
+function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAddSubtask }) {
   // owner/members prepared if you want to display later
   void usersById;
+
   return (
     <Card variant="outlined" sx={styles.taskCard}>
       <CardActionArea onClick={onOpen} sx={styles.taskCardAction}>
         <CardContent sx={styles.taskCardContent}>
-          <Stack
-            direction="row"
-            spacing={1}
-            alignItems="center"
-            justifyContent="space-between"
-          >
-            <Typography variant="h6">{task.title}</Typography>
+          <Stack spacing={1} alignItems="flex-start">
             <Stack direction="row" spacing={1} alignItems="center">
               <StatusChip value={task.status} />
               <PriorityChip value={task.priority} />
             </Stack>
+            <Typography variant="h6">{task.title}</Typography>
+            {/* Add Subtask button */}
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent card click
+                onAddSubtask(task);
+              }}
+              sx={{
+                mt: 1,
+                textTransform: "none",
+                fontSize: "0.75rem",
+                borderColor: "#6A11CB",
+                color: "#6A11CB",
+                "&:hover": {
+                  borderColor: "#4E54C8",
+                  backgroundColor: "rgba(106,17,203,0.04)",
+                },
+              }}
+            >
+              Add Subtask
+            </Button>
           </Stack>
           <Typography variant="caption" sx={styles.cardHint}>
             Click to view details
@@ -196,11 +210,66 @@ export default function TasksPage() {
   const [editMode, setEditMode] = useState(false);   
   const [draft, setDraft] = useState(null);          
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isTaskFormOpen, setIsTaskFormOpen] = useState(false);
+  const [selectedTaskForSubtask, setSelectedTaskForSubtask] = useState(null);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+
+  const queryClient = useQueryClient();
+
+  const SIDEBAR_WIDTH = 240;
+  const SIDEBAR_MINI_WIDTH = 80;
+
+  // // Fetch users for the task form
+  // useEffect(() => {
+  //   const fetchUsers = async () => {
+  //     try {
+  //       const response = await fetch('/api/users');
+  //       const result = await response.json();
+  //       setUsers(result.data || []);
+  //     } catch (error) {
+  //       console.error('Error fetching users:', error);
+  //     }
+  //   };
+  //   fetchUsers();
+  // }, []);
+
+
+  const handleTaskCreated = (newTask) => {
+    // Refresh tasks after creation
+    queryClient.invalidateQueries(['tasks']);
+    setIsTaskFormOpen(false);
+    setSelectedTaskForSubtask(null);
+
+  // Show success message
+    setSnackbar({
+      open: true,
+      message: selectedTaskForSubtask 
+        ? `Subtask "${newTask.title}" created successfully!`
+        : `Task "${newTask.title}" created successfully!`,
+      severity: "success"
+    });
+  };
+
+
+  const openSubtaskForm = (task) => {
+    setSelectedTaskForSubtask(task);
+    setIsTaskFormOpen(true);
+    setIsSearchFocused(false); // Unfocus search bar
+    
+  };
+
+  const openTaskForm = () => {
+    setSelectedTaskForSubtask(null);
+    setIsTaskFormOpen(true);
+    setIsSearchFocused(false); // Unfocus search bar
+  };
 
   // Pagination for task list
   const [page, setPage] = useState(0);
   const limit = 50;
   const offset = page * limit;
+
 
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -314,8 +383,11 @@ export default function TasksPage() {
 
   const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
   const tasksByStatus = useMemo(() => {
-    const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
-    for (const t of tasks) {
+  const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
+  // Only show parent tasks (tasks without parent_task_id)
+
+  const parentTasks = tasks.filter(task => !task.parent_task_id);
+    for (const t of parentTasks) {
       if (t.status === "IN_PROGRESS") group.IN_PROGRESS.push(t);
       else if (t.status === "DONE") group.DONE.push(t);
       else group.TO_DO.push(t);
@@ -491,7 +563,7 @@ export default function TasksPage() {
       })}
     </Stack>
   );
-  const queryClient = useQueryClient();
+  // Removed duplicate queryClient declaration
   const editMutation = useMutation({
     mutationFn: (payload) =>
       apiJson(`/tasks/${selectedTask.task_id}`, {
@@ -524,6 +596,7 @@ export default function TasksPage() {
     { key: "profile", icon: <PersonIcon />, label: "Profile" },
     { key: "settings", icon: <SettingsIcon />, label: "Settings" },
     { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
+    { key: "trash", icon: <DeleteIcon />, label: "Trash" }, 
   ];
 
   return (
@@ -533,6 +606,11 @@ export default function TasksPage() {
         onToggle={() => setIsSidebarOpen((v) => !v)}
         items={sidebarItems}
         title="DonkiBoard"
+        onItemClick={(key) => {  // ADD THIS ENTIRE onItemClick function
+          if (key === "trash") {
+            window.location.href = "/trash";
+          }
+        }}
       />
 
       <Box sx={styles.main}>
@@ -635,6 +713,16 @@ export default function TasksPage() {
                                   task={t}
                                   usersById={usersById}
                                   onOpen={() => { setSelectedTask(t); setEditMode(false); setDraft(null); }}
+                                  actingUser={actingUser}
+                                  onAddSubtask={openSubtaskForm}
+                                  onPriorityUpdate={(message, updatedTask, error) => {
+                                    if (error) {
+                                      setSnackbar({ open: true, message: error, severity: "error" });
+                                    } else if (message) {
+                                      setSnackbar({ open: true, message, severity: "success" });
+                                      queryClient.invalidateQueries(['tasks']);
+                                    }
+                                  }}
                                 />
                               ))}
                             </Stack>
@@ -666,7 +754,6 @@ export default function TasksPage() {
                       </Button>
                     </Stack>
                   )}
-
                   <Box sx={styles.addTaskFabWrapper} className="rainbow-border">
                     <Button
                       variant="contained"
@@ -674,7 +761,7 @@ export default function TasksPage() {
                       startIcon={<AddIcon />}
                       sx={styles.addTaskButton}
                       disabled={!actingUser}
-                    >
+                      onClick = {openTaskForm}>
                       Add task
                     </Button>
                   </Box>
@@ -715,10 +802,14 @@ export default function TasksPage() {
                   <Typography variant="h6" sx={styles.dialogTitle}>{selectedTask.title}</Typography>
                 )}
                 <Stack direction="row" spacing={1}>
+
                   <StatusChipEditable
                     task={selectedTask}
                     actingUserId={actingUser?.user_id}
-                    onLocalUpdate={(t) => setSelectedTask(t)}
+                    onLocalUpdate={(updatedTask) => {
+                      setSelectedTask(updatedTask);
+                      queryClient.invalidateQueries(['tasks']);
+                    }}
                   />
                   <PriorityChip value={selectedTask.priority} />
                        <Button
@@ -744,6 +835,35 @@ export default function TasksPage() {
                       >
                         {editMode ? "Cancel" : "Edit"}
                       </Button>
+                  <PrioritySelector
+                    task={selectedTask}
+                    actingUser={actingUser}
+                    onSuccess={(message, updatedTask) => {
+                      setSnackbar({ open: true, message, severity: "success" });
+                      setSelectedTask(updatedTask);
+                      queryClient.invalidateQueries(['tasks']);
+                    }}
+                    onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
+                  />
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      openSubtaskForm(selectedTask);
+                    }}
+                    sx={{
+                      textTransform: "none",
+                      borderColor: "#6A11CB",
+                      color: "#6A11CB",
+                      "&:hover": {
+                        borderColor: "#4E54C8",
+                        backgroundColor: "rgba(106,17,203,0.04)",
+                      },
+                    }}
+                  >
+                    Add Subtask
+                  </Button>
                 </Stack>
               </Stack>
             </DialogTitle>
@@ -775,9 +895,7 @@ export default function TasksPage() {
                   Hierarchy
                 </Typography>
                 {ancestorChain.length === 0 && (!subtree || subtree.length === 0) ? (
-                  <Typography variant="caption" color="text.secondary">
-                    No hierarchy
-                  </Typography>
+                  <Typography variant="body2" color="text.secondary">None</Typography>
                 ) : (
                   <Stack spacing={1}>
                     {(() => {
@@ -971,61 +1089,15 @@ export default function TasksPage() {
                 </Stack>
               </Box>
 
-              <Divider sx={styles.dialogDivider} />
-
-              <Box sx={styles.dialogSection}>
-                <Typography variant="overline" sx={styles.dialogSectionTitle}>
-                  Meta
-                </Typography>
-                <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Task ID
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.task_id}
-                    </Typography>
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Parent
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.parent_task_id ?? "—"}
-                    </Typography>
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Deleted
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.is_deleted ? "Yes" : "No"}
-                    </Typography>
-                  </Box>
-                </Stack>
-                <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Created
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.created_at
-                        ? new Date(selectedTask.created_at).toLocaleString()
-                        : "—"}
-                    </Typography>
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Updated
-                    </Typography>
-                    <Typography variant="body2" sx={styles.dialogInfoValue}>
-                      {selectedTask.updated_at
-                        ? new Date(selectedTask.updated_at).toLocaleString()
-                        : "—"}
-                    </Typography>
-                  </Box>
-                </Stack>
-              </Box>
+              {/**
+               * Meta section commented out per request
+               *
+               * <Divider sx={styles.dialogDivider} />
+               * <Box sx={styles.dialogSection}>
+               *   <Typography variant="overline" sx={styles.dialogSectionTitle}>Meta</Typography>
+               *   ...
+               * </Box>
+               */}
 
               <Divider sx={styles.dialogDivider} />
 
@@ -1079,11 +1151,38 @@ export default function TasksPage() {
               ) : (
                 <Button onClick={() => setSelectedTask(null)}>Close</Button>
               )}
+              <Button onClick={() => setSelectedTask(null)}>Close</Button>
+              <DeleteButton 
+                task={selectedTask} 
+                actingUserId={selectedUserId}
+                onSuccess={(message) => {
+                  setSnackbar({ open: true, message, severity: "success" });
+                  setSelectedTask(null);
+                  // Refresh tasks
+                  // window.location.reload(); // Simple refresh, or use queryClient if you add it
+                  queryClient.invalidateQueries(['tasks']); //replaces window reload
+                  
+                }}
+                onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
+              />
             </DialogActions>
 
           </>
         )}
       </Dialog>
+
+      {/* Task Form Modal */}
+      <TaskForm
+        isOpen={isTaskFormOpen}
+        onClose={() => {
+          setIsTaskFormOpen(false);
+          setSelectedTaskForSubtask(null);
+        }}
+        onSubmit={handleTaskCreated}
+        parentTask={selectedTaskForSubtask}
+        users={users}
+        actingUserId={actingUser?.user_id}
+      />
 
       <Snackbar
         open={snackbar.open}
@@ -1248,4 +1347,26 @@ const styles = {
     pl: 1,
     borderLeft: "1px dashed #e0e0e0",
   },
+
+  taskCard: {
+    borderRadius: 2,
+    borderColor: "#d9d9d9",
+    boxShadow: "0 2px 8px rgba(106,17,203,0.10)",
+    transition: "transform 120ms ease, box-shadow 120ms ease",
+    "&:hover": {
+      boxShadow: "0 6px 16px rgba(78,84,200,0.20)",
+      transform: "translateY(-1px)",
+      borderColor: "#d5c6ff",
+    },
+  },
+
+  taskCardAction: { 
+    borderRadius: 2,
+    alignItems: "flex-start",
+  },
+  taskCardContent: { 
+    p: 2,
+    "&:last-child": { pb: 2 },
+  },
+
 };

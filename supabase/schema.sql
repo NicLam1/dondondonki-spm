@@ -33,6 +33,10 @@ create table if not exists public.tasks (
   updated_at timestamptz not null default now()
 );
 
+-- for soft delete functionality
+ALTER TABLE tasks ADD COLUMN deleted_at TIMESTAMP DEFAULT NULL;
+ALTER TABLE tasks ADD COLUMN deleted_by INTEGER REFERENCES users(user_id);
+
 -- Updated at trigger
 create or replace function public.set_updated_at()
 returns trigger as $$

@@ -1,16 +1,11 @@
-import { Avatar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { Avatar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Button } from '@mui/material';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuIcon from '@mui/icons-material/Menu';
-
 const SIDEBAR_WIDTH = 240;
 const SIDEBAR_MINI_WIDTH = 80;
 
-export default function Sidebar({ open = true, onToggle, items = [], title = 'DonkiBoard' }) {
-  // ...existing code...
-  const handleChangePassword = () => {
-    navigate('/change-password');
-  };
+export default function Sidebar({ open = true, onToggle, items = [], title = 'DonkiBoard', onItemClick }) {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const email = user.email || '';
@@ -24,11 +19,14 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
     role = 'No role found';
   }
 
+  const handleChangePassword = () => {
+    navigate('/change-password');
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('user');
     navigate('/');
   };
-
   return (
     <Drawer
       variant="permanent"
@@ -53,6 +51,7 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
         {items.map((item) => (
           <ListItemButton
             key={item.key}
+            onClick={() => onItemClick?.(item.key)} 
             sx={{
               ...styles.drawerItemButton,
               justifyContent: open ? 'flex-start' : 'center',
