@@ -235,6 +235,17 @@ export default function TasksPage() {
   // }, []);
 
 
+  // Initialize acting user from localStorage (authenticated user)
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("user") || "{}");
+      const id = stored?.profile?.user_id ?? stored?.user_id ?? null;
+      if (id) setSelectedUserId(String(id));
+    } catch (_) {
+      // ignore malformed localStorage
+    }
+  }, []);
+
   const handleTaskCreated = (newTask) => {
     // Refresh tasks after creation
     queryClient.invalidateQueries(['tasks']);
@@ -294,16 +305,18 @@ export default function TasksPage() {
     [users]
   );
 
-  useEffect(() => {
-    if (users.length && !selectedUserId) {
-      setSelectedUserId(String(users[0].user_id));
-    }
+  const actingUser = useMemo(() => {
+    const found = users.find((u) => String(u.user_id) === String(selectedUserId));
+    if (found) return found;
+    try {
+      const stored = JSON.parse(localStorage.getItem("user") || "{}");
+      const uid = stored?.profile?.user_id ?? stored?.user_id;
+      if (uid) {
+        return { ...stored, user_id: uid };
+      }
+    } catch (_) {}
+    return null;
   }, [users, selectedUserId]);
-
-  const actingUser = useMemo(
-    () => users.find((u) => String(u.user_id) === String(selectedUserId)),
-    [users, selectedUserId]
-  );
 
   // Strict outrank rule (include self)
   const allowedUsers = useMemo(() => {
@@ -625,22 +638,6 @@ export default function TasksPage() {
             </Box>
 
             <Box sx={styles.filtersRow}>
-              <FormControl sx={styles.selectSmall}>
-                <InputLabel id="acting-user-label">Acting user</InputLabel>
-                <Select
-                  labelId="acting-user-label"
-                  value={selectedUserId}
-                  label="Acting user"
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                >
-                  {users.map((u) => (
-                    <MenuItem key={u.user_id} value={String(u.user_id)}>
-                      {u.full_name} ({u.role})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
               {actingUser && actingUser.access_level > 0 && (
                 <FormControl sx={styles.selectMedium}>
                   <InputLabel id="view-users-label">View tasks of</InputLabel>
