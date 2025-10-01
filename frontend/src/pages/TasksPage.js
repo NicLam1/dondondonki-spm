@@ -85,9 +85,11 @@ async function apiJson(path, { method = "GET", params, body } = {}) {
 // ---------- UI chips ----------
 function StatusChip({ value }) {
   const color =
-    value === "DONE"
+    value === "COMPLETED"
       ? "success"
-      : value === "IN_PROGRESS"
+      : value === "UNDER_REVIEW"
+      ? "info"
+      : value === "ONGOING"
       ? "warning"
       : "default";
   return <Chip label={value} color={color} variant="outlined" size="small" />;
@@ -107,7 +109,7 @@ function PriorityChip({ value }) {
 //     .filter(Boolean);}
 
 // Editable status dropdown (explicit Select control)
-const STATUS_OPTIONS = ["TO_DO", "IN_PROGRESS", "DONE"];
+const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
 function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
   const queryClient = useQueryClient();
 
@@ -165,7 +167,7 @@ function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAdd
         <CardContent sx={styles.taskCardContent}>
           <Stack spacing={1} alignItems="flex-start">
             <Stack direction="row" spacing={1} alignItems="center">
-              <StatusChip value={task.status} />
+              <StatusChip value={task.assignee_id == null ? 'UNASSIGNED' : task.status} />
               <PriorityChip value={task.priority} />
             </Stack>
             <Typography variant="h6">{task.title}</Typography>
@@ -396,19 +398,16 @@ export default function TasksPage() {
 
   const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
   const tasksByStatus = useMemo(() => {
-  const group = { TO_DO: [], IN_PROGRESS: [], DONE: [] };
-  // Only show parent tasks (tasks without parent_task_id)
-
-  const parentTasks = tasks.filter(task => !task.parent_task_id);
+    const group = { UNASSIGNED: [], ONGOING: [], UNDER_REVIEW: [], COMPLETED: [] };
+    // Only show parent tasks (tasks without parent_task_id)
+    const parentTasks = tasks.filter(task => !task.parent_task_id);
     for (const t of parentTasks) {
-      if (t.status === "IN_PROGRESS") group.IN_PROGRESS.push(t);
-      else if (t.status === "DONE") group.DONE.push(t);
-      else group.TO_DO.push(t);
+      const derived = t.assignee_id == null ? 'UNASSIGNED' : (t.status || 'UNASSIGNED');
+      if (group[derived]) group[derived].push(t); else group.UNASSIGNED.push(t);
     }
     Object.keys(group).forEach((k) =>
       group[k].sort(
-        (a, b) =>
-          (priorityRank[a.priority] ?? 99) - (priorityRank[b.priority] ?? 99)
+        (a, b) => (priorityRank[a.priority] ?? 99) - (priorityRank[b.priority] ?? 99)
       )
     );
     return group;
@@ -434,6 +433,7 @@ export default function TasksPage() {
   const canViewFullSubtree = useMemo(() => {
     if (!selectedTask || !actingUser) return false;
     if (selectedTask.owner_id === actingUser.user_id) return true;
+    if (selectedTask.assignee_id === actingUser.user_id) return true;
     if (
       selectedOwner &&
       typeof selectedOwner.access_level === "number" &&
@@ -599,9 +599,10 @@ export default function TasksPage() {
     onError: (e) => showError(e?.message || "Failed to save task"),
   });
   const statusLabels = {
-    TO_DO: "To Do",
-    IN_PROGRESS: "In Progress",
-    DONE: "Completed",
+    UNASSIGNED: "Unassigned",
+    ONGOING: "Ongoing",
+    UNDER_REVIEW: "Under Review",
+    COMPLETED: "Completed",
   };
 
   const sidebarItems = [
@@ -690,7 +691,7 @@ export default function TasksPage() {
                 <Box sx={styles.taskSection}>
                   <Box sx={styles.gradientDivider} />
                   <Box sx={styles.columnsWrap}>
-                    {["TO_DO", "IN_PROGRESS", "DONE"].map((status) => (
+                    {["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"].map((status) => (
                       <Box key={status} sx={styles.column}>
                         <Paper elevation={0} sx={styles.columnPaper}>
                           <Typography variant="subtitle1" sx={styles.columnTitle}>
@@ -1041,6 +1042,52 @@ export default function TasksPage() {
                   </Box>
                   <Box sx={styles.dialogInfoItem}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
+                      Assignee
+                    </Typography>
+                    {editMode ? (
+                      <FormControl fullWidth size="small">
+                        <Select
+                          value={
+                            draft?.assignee_id != null
+                              ? String(draft.assignee_id)
+                              : selectedTask.assignee_id != null
+                              ? String(selectedTask.assignee_id)
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === "") {
+                              setDraft((d) => ({ ...d, assignee_id: null }));
+                              return;
+                            }
+                            const next = Number(raw);
+                            setDraft((d) => ({ ...d, assignee_id: Number.isInteger(next) ? next : null }));
+                          }}
+                          renderValue={(val) => {
+                            if (val === "" || val == null) return "— None —";
+                            return usersById.get(Number(val))?.full_name || "—";
+                          }}
+                        >
+                          <MenuItem value="">
+                            <ListItemText primary="— None —" />
+                          </MenuItem>
+                          {Array.from(usersById.values()).map((u) => (
+                            <MenuItem key={u.user_id} value={String(u.user_id)}>
+                              <ListItemText primary={`${u.full_name} (${u.role})`} />
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <Typography variant="body2" sx={styles.dialogInfoValue}>
+                        {selectedTask.assignee_id != null
+                          ? usersById.get(selectedTask.assignee_id)?.full_name || "—"
+                          : "—"}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Box sx={styles.dialogInfoItem}>
+                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Members
                     </Typography>
                     {editMode ? (
@@ -1130,6 +1177,7 @@ export default function TasksPage() {
                         status: selectedTask.status,
                         members_id: Array.isArray(selectedTask.members_id) ? selectedTask.members_id : [],
                         owner_id: selectedTask.owner_id,
+                            assignee_id: selectedTask.assignee_id ?? null,
                       });
                       setEditMode(true);
                     }}
@@ -1157,6 +1205,7 @@ export default function TasksPage() {
                           due_date: draft.due_date || null, // allow clearing
                           members_id: Array.isArray(draft.members_id) ? draft.members_id : [],
                           owner_id: draft.owner_id,
+                          assignee_id: draft.assignee_id ?? null,
                         };
                         editMutation.mutate(payload);
                       }}

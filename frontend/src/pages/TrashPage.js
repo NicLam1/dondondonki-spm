@@ -35,7 +35,7 @@ async function fetchJson(path, params) {
 }
 
 function StatusChip({ value }) {
-  const color = value === "DONE" ? "success" : value === "IN_PROGRESS" ? "warning" : "default";
+  const color = value === "COMPLETED" ? "success" : value === "UNDER_REVIEW" ? "info" : value === "ONGOING" ? "warning" : "default";
   return <Chip label={value} color={color} variant="outlined" size="small" />;
 }
 

@@ -141,11 +141,12 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   const { 
     title, 
     description, 
-    status = 'TO_DO', 
+    status, 
     priority = 'MEDIUM', 
     due_date, 
     project, 
     owner_id, 
+    assignee_id = null,
     members_id = [], 
     acting_user_id 
   } = req.body;
@@ -161,12 +162,10 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   }
 
   // Validate status and priority
-  const validStatuses = ['TO_DO', 'IN_PROGRESS', 'DONE'];
+  const validStatuses = ['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED'];
   const validPriorities = ['HIGH', 'MEDIUM', 'LOW'];
   
-  if (!validStatuses.includes(status)) {
-    return res.status(400).json({ error: 'Invalid status. Must be TO_DO, IN_PROGRESS, or DONE' });
-  }
+  const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
   
   if (!validPriorities.includes(priority)) {
     return res.status(400).json({ error: 'Invalid priority. Must be HIGH, MEDIUM, or LOW' });
@@ -250,11 +249,12 @@ router.post('/tasks/:id/subtask', async (req, res) => {
     .insert({
       title,
       description,
-      status,
+      status: effectiveStatus,
       priority,
       due_date,
       project: taskProject,
       owner_id,
+      assignee_id,
       members_id,
       parent_task_id: parentTaskId,
       is_deleted: false,
