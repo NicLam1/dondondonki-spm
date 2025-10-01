@@ -802,7 +802,6 @@ export default function TasksPage() {
                   <Typography variant="h6" sx={styles.dialogTitle}>{selectedTask.title}</Typography>
                 )}
                 <Stack direction="row" spacing={1}>
-
                   <StatusChipEditable
                     task={selectedTask}
                     actingUserId={actingUser?.user_id}
@@ -812,29 +811,6 @@ export default function TasksPage() {
                     }}
                   />
                   <PriorityChip value={selectedTask.priority} />
-                       <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => {
-                          if (!editMode) {
-                            setDraft({
-                              title: selectedTask.title || "",
-                              description: selectedTask.description || "",
-                              project: selectedTask.project || "",
-                              due_date: selectedTask.due_date ? selectedTask.due_date.slice(0, 10) : "",
-                              status: selectedTask.status,
-                              members_id: Array.isArray(selectedTask.members_id) ? selectedTask.members_id : [],
-                              owner_id: selectedTask.owner_id,
-                            });
-                            setEditMode(true);
-                          } else {
-                            setEditMode(false);
-                            setDraft(null);
-                          }
-                        }}
-                      >
-                        {editMode ? "Cancel" : "Edit"}
-                      </Button>
                   <PrioritySelector
                     task={selectedTask}
                     actingUser={actingUser}
@@ -845,25 +821,6 @@ export default function TasksPage() {
                     }}
                     onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
                   />
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    startIcon={<AddIcon />}
-                    onClick={() => {
-                      openSubtaskForm(selectedTask);
-                    }}
-                    sx={{
-                      textTransform: "none",
-                      borderColor: "#6A11CB",
-                      color: "#6A11CB",
-                      "&:hover": {
-                        borderColor: "#4E54C8",
-                        backgroundColor: "rgba(106,17,203,0.04)",
-                      },
-                    }}
-                  >
-                    Add Subtask
-                  </Button>
                 </Stack>
               </Stack>
             </DialogTitle>
@@ -894,75 +851,113 @@ export default function TasksPage() {
                 <Typography variant="overline" sx={styles.dialogSectionTitle}>
                   Hierarchy
                 </Typography>
-                {ancestorChain.length === 0 && (!subtree || subtree.length === 0) ? (
-                  <Typography variant="body2" color="text.secondary">None</Typography>
-                ) : (
-                  <Stack spacing={1}>
-                    {(() => {
-                      const chain = ancestorChain.concat(selectedTask ? [selectedTask] : []);
-                      if (!chain.length) return null;
-                      return (
-                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                          {chain.map((t, idx) => (
-                            <Stack key={t.task_id} direction="row" spacing={1} alignItems="center">
-                              {(() => {
-                                const isCurrent = t.task_id === selectedTask.task_id;
-                                const accessibleTask = tasksById.get(t.task_id);
-                                const isAccessible = Boolean(accessibleTask) || canViewFullSubtree;
-                                const handleClick = async () => {
-                                  if (isCurrent) return;
-                                  if (accessibleTask) {
-                                    setSelectedTask(accessibleTask);
-                                    return;
-                                  }
-                                  if (!canViewFullSubtree) {
-                                    showError("You don't have permission to view this task.");
-                                    return;
-                                  }
-                                  try {
-                                    const resp = await fetchJson(`/tasks/${t.task_id}`, {
-                                      acting_user_id: String(actingUser.user_id),
-                                    });
-                                    if (resp && resp.data) setSelectedTask(resp.data);
-                                  } catch (e) {
-                                    showError("You lack permissions to view this task.");
-                                  }
-                                };
-                                return (
-                                  <Chip
-                                    size="small"
-                                    label={t.title}
-                                    color={isCurrent ? "primary" : undefined}
-                                    variant={isCurrent ? "filled" : "outlined"}
-                                    onClick={!isCurrent ? handleClick : undefined}
-                                    sx={{
-                                      cursor: !isCurrent && isAccessible ? "pointer" : "default",
-                                      opacity: !isCurrent && !isAccessible ? 0.7 : 1,
-                                    }}
-                                  />
-                                );
-                              })()}
-                              {idx < chain.length - 1 && (
-                                <Typography variant="caption" color="text.secondary">
-                                  /
-                                </Typography>
-                              )}
-                            </Stack>
-                          ))}
-                        </Stack>
-                      );
-                    })()}
+                <Stack spacing={1}>
+                  {(() => {
+                    const chain = ancestorChain.concat(selectedTask ? [selectedTask] : []);
+                    if (!chain.length) return null;
+                    return (
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                        {chain.map((t, idx) => (
+                          <Stack key={t.task_id} direction="row" spacing={1} alignItems="center">
+                            {(() => {
+                              const isCurrent = t.task_id === selectedTask.task_id;
+                              const accessibleTask = tasksById.get(t.task_id);
+                              const isAccessible = Boolean(accessibleTask) || canViewFullSubtree;
+                              const handleClick = async () => {
+                                if (isCurrent) return;
+                                if (accessibleTask) {
+                                  setSelectedTask(accessibleTask);
+                                  return;
+                                }
+                                if (!canViewFullSubtree) {
+                                  showError("You don't have permission to view this task.");
+                                  return;
+                                }
+                                try {
+                                  const resp = await fetchJson(`/tasks/${t.task_id}`, {
+                                    acting_user_id: String(actingUser.user_id),
+                                  });
+                                  if (resp && resp.data) setSelectedTask(resp.data);
+                                } catch (e) {
+                                  showError("You lack permissions to view this task.");
+                                }
+                              };
+                              return (
+                                <Chip
+                                  size="small"
+                                  label={t.title}
+                                  color={isCurrent ? "primary" : undefined}
+                                  variant={isCurrent ? "filled" : "outlined"}
+                                  onClick={!isCurrent ? handleClick : undefined}
+                                  sx={{
+                                    cursor: !isCurrent && isAccessible ? "pointer" : "default",
+                                    opacity: !isCurrent && !isAccessible ? 0.7 : 1,
+                                  }}
+                                />
+                              );
+                            })()}
+                            {idx < chain.length - 1 && (
+                              <Typography variant="caption" color="text.secondary">
+                                /
+                              </Typography>
+                            )}
+                          </Stack>
+                        ))}
+                      </Stack>
+                    );
+                  })()}
 
-                    {subtree && subtree.length > 0 && (
-                      <Box>
-                        <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                          Subtasks
-                        </Typography>
+                  <Box>
+                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
+                      Subtasks
+                    </Typography>
+                    {subtree && subtree.length > 0 ? (
+                      <>
                         <Box sx={{ mt: 0.5 }}>{renderTree(subtree)}</Box>
-                      </Box>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={<AddIcon />}
+                          onClick={() => {
+                            openSubtaskForm(selectedTask);
+                          }}
+                          sx={{
+                            mt: 1,
+                            textTransform: "none",
+                            borderColor: "#6A11CB",
+                            color: "#6A11CB",
+                            "&:hover": {
+                              borderColor: "#4E54C8",
+                              backgroundColor: "rgba(106,17,203,0.04)",
+                            },
+                          }}
+                        >
+                          Add Subtask
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        startIcon={<AddIcon />}
+                        onClick={() => {
+                          openSubtaskForm(selectedTask);
+                        }}
+                        sx={{
+                          textTransform: "none",
+                          borderColor: "#6A11CB",
+                          color: "#6A11CB",
+                          "&:hover": {
+                            borderColor: "#4E54C8",
+                            backgroundColor: "rgba(106,17,203,0.04)",
+                          },
+                        }}
+                      >
+                        Add Subtask
+                      </Button>
                     )}
-                  </Stack>
-                )}
+                  </Box>
+                </Stack>
               </Box>
 
               <Divider sx={styles.dialogDivider} />
@@ -1123,48 +1118,69 @@ export default function TasksPage() {
                 </Stack>
               </Box>
             </DialogContent>
-            <DialogActions>
-              {editMode ? (
-                <>
-                  <Button onClick={() => { setEditMode(false); setDraft(null); }}>
-                    Cancel
-                  </Button>
+            <DialogActions sx={{ justifyContent: "space-between", px:3}}>
+              <Box sx={{ display: "flex", gap: 1 }}>
+                {!editMode && (
                   <Button
-                    variant="contained"
+                    size="small"
+                    variant="outlined"
                     onClick={() => {
-                      if (!actingUser) { showError("Select an acting user first."); return; }
-                      const payload = {
-                        title: draft.title,
-                        description: draft.description,
-                        project: draft.project,
-                        priority: draft.priority,
-                        due_date: draft.due_date || null, // allow clearing
-                        members_id: Array.isArray(draft.members_id) ? draft.members_id : [],
-                        owner_id: draft.owner_id,
-                      };
-                      editMutation.mutate(payload);
+                      setDraft({
+                        title: selectedTask.title || "",
+                        description: selectedTask.description || "",
+                        project: selectedTask.project || "",
+                        due_date: selectedTask.due_date ? selectedTask.due_date.slice(0, 10) : "",
+                        status: selectedTask.status,
+                        members_id: Array.isArray(selectedTask.members_id) ? selectedTask.members_id : [],
+                        owner_id: selectedTask.owner_id,
+                      });
+                      setEditMode(true);
                     }}
                   >
-                    Save
+                    Edit
                   </Button>
-                </>
-              ) : (
-                <Button onClick={() => setSelectedTask(null)}>Close</Button>
-              )}
-              <Button onClick={() => setSelectedTask(null)}>Close</Button>
-              <DeleteButton 
-                task={selectedTask} 
-                actingUserId={selectedUserId}
-                onSuccess={(message) => {
-                  setSnackbar({ open: true, message, severity: "success" });
-                  setSelectedTask(null);
-                  // Refresh tasks
-                  // window.location.reload(); // Simple refresh, or use queryClient if you add it
-                  queryClient.invalidateQueries(['tasks']); //replaces window reload
-                  
-                }}
-                onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
-              />
+                )}
+              </Box>
+
+              <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+                {editMode ? (
+                  <>
+                    <Button onClick={() => { setEditMode(false); setDraft(null); }}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="contained"
+                      onClick={() => {
+                        if (!actingUser) { showError("Select an acting user first."); return; }
+                        const payload = {
+                          title: draft.title,
+                          description: draft.description,
+                          project: draft.project,
+                          priority: draft.priority,
+                          due_date: draft.due_date || null, // allow clearing
+                          members_id: Array.isArray(draft.members_id) ? draft.members_id : [],
+                          owner_id: draft.owner_id,
+                        };
+                        editMutation.mutate(payload);
+                      }}
+                    >
+                      Save
+                    </Button>
+                  </>
+                ) : (
+                  <Button onClick={() => setSelectedTask(null)}>Close</Button>
+                )}
+                <DeleteButton 
+                  task={selectedTask} 
+                  actingUserId={selectedUserId}
+                  onSuccess={(message) => {
+                    setSnackbar({ open: true, message, severity: "success" });
+                    setSelectedTask(null);
+                    queryClient.invalidateQueries(['tasks']);
+                  }}
+                  onError={(error) => setSnackbar({ open: true, message: error, severity: "error" })}
+                />
+              </Box>
             </DialogActions>
 
           </>
