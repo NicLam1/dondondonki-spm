@@ -109,7 +109,7 @@ export default function TrashPage() {
         title="DonkiBoard"
         onItemClick={(key) => {
           if (key === "tasks") {
-            window.location.href = "/";
+            window.location.href = "/tasks";
           }
         }}
       />
@@ -122,7 +122,7 @@ export default function TrashPage() {
             <Box sx={{ mb: 4, display: "flex", alignItems: "center", gap: 2 }}>
               <Button
                 startIcon={<ArrowBackIcon />}
-                onClick={() => window.location.href = "/"}
+                onClick={() => window.location.href = "/tasks"}
                 sx={{ color: 'text.secondary' }}
               >
                 Back to Tasks
