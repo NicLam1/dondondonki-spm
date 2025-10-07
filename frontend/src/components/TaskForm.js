@@ -26,11 +26,11 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
     // Get today's date in YYYY-MM-DD format
     const today = new Date().toISOString().split('T')[0];
 
-    const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState({
     title: '',
     description: '',
     status: 'UNASSIGNED',
-    priority: 'MEDIUM',
+    priority_bucket: 5,
     due_date: '',
     project: parentTask?.project || '',
     owner_id: actingUserId || '',
@@ -63,7 +63,8 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
       setFormData(prev => ({
         ...prev,
         project: '',
-        owner_id: actingUserId || ''
+        owner_id: actingUserId || '',
+        priority_bucket: 5,
       }));
     }
   }, [parentTask, actingUserId]);
@@ -197,7 +198,7 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
       title: '',
       description: '',
       status: 'UNASSIGNED',
-      priority: 'MEDIUM',
+      // No priority here; will inherit from parent/main task on creation
       due_date: '',
       owner_id: formData.owner_id
     };
@@ -239,6 +240,24 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
         setIsSubmitting(false);
         return;
       }
+      if (!parentTask) {
+        if (!(Number.isInteger(formData.priority_bucket) || /^\d+$/.test(String(formData.priority_bucket)))) {
+          showError('Priority bucket must be 1–10.');
+          setIsSubmitting(false);
+          return;
+        }
+        const pb = parseInt(String(formData.priority_bucket), 10);
+        if (pb < 1 || pb > 10) {
+          showError('Priority bucket must be 1–10.');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+      if (!formData.due_date || String(formData.due_date).trim() === '') {
+        showError('Due date is required.');
+        setIsSubmitting(false);
+        return;
+      }
       if (formData.status !== 'UNASSIGNED' && (formData.assignee_id == null || formData.assignee_id === '')) {
         showError('Please select an assignee or set status to Unassigned.');
         setIsSubmitting(false);
@@ -249,16 +268,33 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
         ? `/tasks/${parentTask.task_id}/subtask`
         : '/tasks';
       
+      // Build request payload explicitly to avoid JSON.stringify on functions
+      let payload;
+      if (parentTask) {
+        const { title, description, status, due_date, owner_id, assignee_id, members_id, acting_user_id } = formData;
+        payload = {
+          title,
+          description,
+          status,
+          due_date,
+          owner_id,
+          assignee_id,
+          members_id,
+          acting_user_id,
+          parent_task_id: parentTask.task_id
+        };
+      } else {
+        const { priority_bucket } = formData;
+        payload = { ...formData, priority_bucket: parseInt(String(priority_bucket), 10), parent_task_id: null };
+      }
+
       const taskResponse = await fetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({
-          ...formData,
-          parent_task_id: parentTask?.task_id || null
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!taskResponse.ok) {
@@ -280,7 +316,14 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
               },
               credentials: 'include',
               body: JSON.stringify({
-                ...subtask,
+                // inherit parent's project and priority; omit those fields intentionally
+                title: subtask.title,
+                description: subtask.description,
+                status: subtask.status,
+                due_date: subtask.due_date,
+                owner_id: subtask.owner_id,
+                assignee_id: null,
+                members_id: [],
                 acting_user_id: formData.acting_user_id
               }),
             });
@@ -300,7 +343,7 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
         title: '',
         description: '',
         status: 'UNASSIGNED',
-        priority: 'MEDIUM',
+        priority_bucket: 5,
         due_date: '',
         project: '',
         owner_id: actingUserId || '',
@@ -376,19 +419,21 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
               </Select>
             </FormControl>
 
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <InputLabel>Priority</InputLabel>
-              <Select
-                label="Priority"
-                name="priority"
-                value={formData.priority}
-                onChange={handleInputChange}
-              >
-                <MenuItem value="HIGH">High</MenuItem>
-                <MenuItem value="MEDIUM">Medium</MenuItem>
-                <MenuItem value="LOW">Low</MenuItem>
-              </Select>
-            </FormControl>
+            {!parentTask && (
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel>Priority</InputLabel>
+                <Select
+                  label="Priority"
+                  name="priority_bucket"
+                  value={formData.priority_bucket}
+                  onChange={(e) => setFormData(prev => ({ ...prev, priority_bucket: parseInt(e.target.value, 10) }))}
+                >
+                  {Array.from({ length: 10 }, (_, i) => i + 1).map(n => (
+                    <MenuItem key={n} value={n}>{`P${n}`}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
           </Stack>
 
           <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
@@ -615,19 +660,6 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
                     />
 
                     <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
-                      <FormControl size="small" sx={{ minWidth: 160 }}>
-                        <InputLabel>Priority</InputLabel>
-                        <Select
-                          label="Priority"
-                          value={subtask.priority}
-                          onChange={(e) => updateSubtask(subtask.id, 'priority', e.target.value)}
-                        >
-                          <MenuItem value="HIGH">High</MenuItem>
-                          <MenuItem value="MEDIUM">Medium</MenuItem>
-                          <MenuItem value="LOW">Low</MenuItem>
-                        </Select>
-                      </FormControl>
-
                       <TextField
                         type="date"
                         label="Due Date"

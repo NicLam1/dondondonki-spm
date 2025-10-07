@@ -20,20 +20,15 @@ const PrioritySelector = ({
   size = "small"
 }) => {
   const [loading, setLoading] = useState(false);
-  
-  // Check if user can change priority (manager/director only)
-  const canChangePriority = actingUser && actingUser.access_level > 0;
-  
-  const priorities = [
-    { value: 'HIGH', label: 'HIGH' },
-    { value: 'MEDIUM', label: 'MEDIUM' },
-    { value: 'LOW', label: 'LOW' }
-  ];
+  // Only task owner can change the priority bucket
+  const canChangePriority = !!(actingUser && task && actingUser.user_id === task.owner_id);
+
+  const priorities = Array.from({ length: 10 }, (_, i) => ({ value: i + 1, label: `P${i + 1}` }));
 
   const handlePriorityChange = async (event) => {
     const newPriority = event.target.value;
     
-    if (!task || !actingUser || loading || newPriority === task.priority || !canChangePriority) {
+    if (!task || !actingUser || loading || newPriority === task.priority_bucket || !canChangePriority) {
       return;
     }
     
@@ -46,7 +41,7 @@ const PrioritySelector = ({
         },
         body: JSON.stringify({
           acting_user_id: actingUser.user_id,
-          priority: newPriority
+          priority_bucket: Number(newPriority)
         })
       });
 
@@ -78,7 +73,7 @@ const PrioritySelector = ({
       >
         <InputLabel sx={{ fontSize: '0.875rem' }}>Priority</InputLabel>
         <Select
-          value={task?.priority || 'LOW'}
+          value={task?.priority_bucket ?? 5}
           label="Priority"
           onChange={handlePriorityChange}
           sx={{ 
@@ -105,7 +100,7 @@ const PrioritySelector = ({
   // If user doesn't have authority, wrap in tooltip
   if (!canChangePriority) {
     return (
-      <Tooltip title="Not authorised to change priority" arrow>
+      <Tooltip title="Only the task owner can change priority" arrow>
         <span>{dropdown}</span>
       </Tooltip>
     );

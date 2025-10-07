@@ -20,7 +20,8 @@ create table if not exists public.tasks (
   title text not null,
   description text,
   status text not null check (status in ('UNASSIGNED','ONGOING','UNDER_REVIEW','COMPLETED')) default 'UNASSIGNED',
-  priority text not null check (priority in ('LOW','MEDIUM','HIGH')) default 'MEDIUM',
+  -- Priority bucket: integer 1–10 (1 = highest priority)
+  priority_bucket integer not null check (priority_bucket between 1 and 10) default 5,
   due_date date,
   project text,
   owner_id integer references public.users(user_id) on delete set null,

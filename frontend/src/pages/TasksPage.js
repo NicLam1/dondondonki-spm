@@ -82,6 +82,8 @@ async function apiJson(path, { method = "GET", params, body } = {}) {
   return json ?? {};
 }
 
+// No normalization needed; using canonical statuses only
+
 // ---------- UI chips ----------
 function StatusChip({ value }) {
   const color =
@@ -89,16 +91,21 @@ function StatusChip({ value }) {
       ? "success"
       : value === "UNDER_REVIEW"
       ? "info"
-      : value === "ONGOING"
-      ? "warning"
       : "default";
-  return <Chip label={value} color={color} variant="outlined" size="small" />;
+  const labelMap = {
+    UNASSIGNED: "Unassigned",
+    ONGOING: "Ongoing",
+    UNDER_REVIEW: "Under Review",
+    COMPLETED: "Completed",
+  };
+  return <Chip label={labelMap[value] || value} color={color} variant="outlined" size="small" />;
 }
 
 function PriorityChip({ value }) {
-  const color =
-    value === "HIGH" ? "error" : value === "MEDIUM" ? "warning" : "default";
-  return <Chip label={value} color={color} variant="outlined" size="small" />;
+  const bucket = Number.isInteger(value) ? value : null;
+  const color = bucket != null ? (bucket <= 3 ? "error" : bucket <= 7 ? "warning" : "default") : "default";
+  const label = bucket != null ? `P${bucket}` : "P?";
+  return <Chip label={label} color={color} variant="outlined" size="small" />;
 }
 
 
@@ -110,10 +117,10 @@ function PriorityChip({ value }) {
 
 // Editable status dropdown (explicit Select control)
 const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
-function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
+ function StatusChipEditable({ task, actingUserId, onLocalUpdate, onError }) {
   const queryClient = useQueryClient();
 
-  const mutation = useMutation({
+   const mutation = useMutation({
     mutationFn: (newStatus) =>
       apiJson(`/tasks/${task.task_id}/status`, {
         method: "PATCH",
@@ -121,11 +128,22 @@ function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
         body: { status: newStatus },
       }),
     onMutate: async (newStatus) => {
+      // Guard: cannot change from UNASSIGNED without an assignee
+      if ((task.assignee_id == null) && newStatus !== 'UNASSIGNED') {
+         throw new Error('Assign someone before changing status');
+      }
+      // Guard: cannot set UNASSIGNED when an assignee exists
+      if ((task.assignee_id != null) && newStatus === 'UNASSIGNED') {
+        throw new Error('Remove assignee before changing status to Unassigned');
+      }
       onLocalUpdate?.({ ...task, status: newStatus });
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       return {};
     },
-    onError: () => {},
+     onError: (e) => {
+       const message = e?.message || 'Unable to update status';
+       onError?.(message);
+     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
@@ -135,7 +153,16 @@ function StatusChipEditable({ task, actingUserId, onLocalUpdate }) {
 
   const handleChange = (e) => {
     const val = e.target.value;
-    if (val && val !== task.status) mutation.mutate(val);
+    if (!val || val === task.status) return;
+    if (task.assignee_id == null && val !== 'UNASSIGNED') {
+      onError?.('Assign someone before changing status');
+      return;
+    }
+    if (task.assignee_id != null && val === 'UNASSIGNED') {
+      onError?.('Remove assignee before changing status to Unassigned');
+      return;
+    }
+    mutation.mutate(val);
   };
 
   return (
@@ -168,7 +195,7 @@ function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAdd
           <Stack spacing={1} alignItems="flex-start">
             <Stack direction="row" spacing={1} alignItems="center">
               <StatusChip value={task.assignee_id == null ? 'UNASSIGNED' : task.status} />
-              <PriorityChip value={task.priority} />
+              <PriorityChip value={task.priority_bucket} />
             </Stack>
             <Typography variant="h6">{task.title}</Typography>
             {/* Add Subtask button */}
@@ -396,19 +423,19 @@ export default function TasksPage() {
     return map;
   }, [tasks]);
 
-  const priorityRank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
   const tasksByStatus = useMemo(() => {
     const group = { UNASSIGNED: [], ONGOING: [], UNDER_REVIEW: [], COMPLETED: [] };
-    // Only show parent tasks (tasks without parent_task_id)
-    const parentTasks = tasks.filter(task => !task.parent_task_id);
-    for (const t of parentTasks) {
-      const derived = t.assignee_id == null ? 'UNASSIGNED' : (t.status || 'UNASSIGNED');
+    // Show all tasks (including subtasks) in their respective columns
+    for (const t of tasks) {
+      const derived = t.assignee_id == null ? 'UNASSIGNED' : (t.status || 'ONGOING');
       if (group[derived]) group[derived].push(t); else group.UNASSIGNED.push(t);
     }
     Object.keys(group).forEach((k) =>
-      group[k].sort(
-        (a, b) => (priorityRank[a.priority] ?? 99) - (priorityRank[b.priority] ?? 99)
-      )
+      group[k].sort((a, b) => {
+        const av = Number.isInteger(a.priority_bucket) ? a.priority_bucket : 999;
+        const bv = Number.isInteger(b.priority_bucket) ? b.priority_bucket : 999;
+        return av - bv; // lower bucket number = higher priority
+      })
     );
     return group;
   }, [tasks]);
@@ -800,15 +827,16 @@ export default function TasksPage() {
                   <Typography variant="h6" sx={styles.dialogTitle}>{selectedTask.title}</Typography>
                 )}
                 <Stack direction="row" spacing={1}>
-                  <StatusChipEditable
+                   <StatusChipEditable
                     task={selectedTask}
                     actingUserId={actingUser?.user_id}
                     onLocalUpdate={(updatedTask) => {
                       setSelectedTask(updatedTask);
                       queryClient.invalidateQueries(['tasks']);
                     }}
+                     onError={(message) => setSnackbar({ open: true, message, severity: 'error' })}
                   />
-                  <PriorityChip value={selectedTask.priority} />
+                  <PriorityChip value={selectedTask.priority_bucket} />
                   <PrioritySelector
                     task={selectedTask}
                     actingUser={actingUser}
@@ -1201,11 +1229,12 @@ export default function TasksPage() {
                           title: draft.title,
                           description: draft.description,
                           project: draft.project,
-                          priority: draft.priority,
                           due_date: draft.due_date || null, // allow clearing
                           members_id: Array.isArray(draft.members_id) ? draft.members_id : [],
                           owner_id: draft.owner_id,
                           assignee_id: draft.assignee_id ?? null,
+                          // Backend will auto-set status to ONGOING if assignee is added and status omitted/UNASSIGNED
+                          status: draft.assignee_id == null ? 'UNASSIGNED' : (draft.status ?? 'UNASSIGNED'),
                         };
                         editMutation.mutate(payload);
                       }}

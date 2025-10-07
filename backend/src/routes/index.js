@@ -9,6 +9,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY
 );
 
+// Normalize any legacy statuses to the canonical set
+function mapLegacyStatus(status) {
+  if (status === 'TO_DO' || status === 'IN_PROGRESS') return 'ONGOING';
+  if (status === 'DONE') return 'COMPLETED';
+  return status;
+}
+
 
 
 router.get('/users', async (req, res) => {
@@ -76,7 +83,7 @@ router.get('/tasks', async (req, res) => {
     // Merge, de-dupe by task_id
     const map = new Map();
     [...ownerTasks, ...memberTasks].forEach((t) => map.set(t.task_id, t));
-    return res.json({ data: Array.from(map.values()) });
+    return res.json({ data: Array.from(map.values()).map((t) => ({ ...t, status: mapLegacyStatus(t.status) })) });
   }
 
   // Fallback: single user view
@@ -97,7 +104,7 @@ router.get('/tasks', async (req, res) => {
 
     const map = new Map();
     [...ownerTasks, ...memberTasks].forEach((t) => map.set(t.task_id, t));
-    return res.json({ data: Array.from(map.values()) });
+    return res.json({ data: Array.from(map.values()).map((t) => ({ ...t, status: mapLegacyStatus(t.status) })) });
   }
 
   // Default: return all non-deleted tasks
@@ -107,7 +114,7 @@ router.get('/tasks', async (req, res) => {
     .eq('is_deleted', false)
     .order('task_id');
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ data });
+  res.json({ data: (data || []).map((t) => ({ ...t, status: mapLegacyStatus(t.status) })) });
 });
 
 // Create a new task (POST /tasks)
@@ -115,25 +122,78 @@ router.post('/tasks', async (req, res) => {
   const { 
     title, 
     description, 
-    status = 'TO_DO', 
-    priority = 'MEDIUM', 
+    status = 'UNASSIGNED', 
+    priority_bucket, 
     due_date, 
     project, 
     owner_id, 
+    assignee_id = null,
     members_id = [], 
     parent_task_id = null,
     acting_user_id 
-  } = req.body;
+  } = req.body || {};
 
   if (!title || !owner_id || !acting_user_id) {
     return res.status(400).json({ 
       error: 'Missing required fields: title, owner_id, and acting_user_id are required' 
     });
   }
+  if (!due_date || String(due_date).trim() === '') {
+    return res.status(400).json({ error: 'due_date is required' });
+  }
+  if (!(Number.isInteger(priority_bucket) && priority_bucket >= 1 && priority_bucket <= 10)) {
+    return res.status(400).json({ error: 'priority_bucket must be an integer between 1 and 10' });
+  }
 
-  // TODO: Implement task creation logic here
-  // For now, just return a success response
-  return res.json({ success: true, message: 'Task created (placeholder)' });
+  // Load acting user (to allow creating tasks for self or for users they outrank)
+  const { data: acting, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', acting_user_id)
+    .maybeSingle();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  if (owner_id !== acting_user_id) {
+    const { data: targetOwner, error: ownerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', owner_id)
+      .maybeSingle();
+    if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+    if (!targetOwner) return res.status(400).json({ error: 'Owner not found' });
+    if (!(acting.access_level > targetOwner.access_level)) {
+      return res.status(403).json({ error: 'Insufficient permissions to create task for this owner' });
+    }
+  }
+
+  // Compute effective status based on assignee
+  const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status === 'UNASSIGNED' ? 'ONGOING' : status);
+
+  const insertPayload = {
+    title,
+    description,
+    status: effectiveStatus,
+    priority_bucket,
+    due_date,
+    project,
+    owner_id,
+    assignee_id,
+    members_id,
+    parent_task_id,
+    is_deleted: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const { data: created, error: createErr } = await supabase
+    .from('tasks')
+    .insert(insertPayload)
+    .select()
+    .single();
+  if (createErr) return res.status(500).json({ error: createErr.message });
+
+  return res.json({ success: true, data: created });
 });
 // Create a subtask (POST /tasks/:id/subtask)
 router.post('/tasks/:id/subtask', async (req, res) => {
@@ -142,7 +202,6 @@ router.post('/tasks/:id/subtask', async (req, res) => {
     title, 
     description, 
     status, 
-    priority = 'MEDIUM', 
     due_date, 
     project, 
     owner_id, 
@@ -160,16 +219,13 @@ router.post('/tasks/:id/subtask', async (req, res) => {
       error: 'Missing required fields: title, owner_id, and acting_user_id are required' 
     });
   }
-
-  // Validate status and priority
-  const validStatuses = ['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED'];
-  const validPriorities = ['HIGH', 'MEDIUM', 'LOW'];
-  
-  const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
-  
-  if (!validPriorities.includes(priority)) {
-    return res.status(400).json({ error: 'Invalid priority. Must be HIGH, MEDIUM, or LOW' });
+  if (!due_date || String(due_date).trim() === '') {
+    return res.status(400).json({ error: 'due_date is required' });
   }
+
+  // Validate status
+  const validStatuses = ['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED'];
+  const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
 
   // Load acting user to check permissions
   const { data: actingUser, error: actingErr } = await supabase
@@ -188,7 +244,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   // Verify parent task exists and check permissions
   const { data: parentTask, error: parentErr } = await supabase
     .from('tasks')
-    .select('task_id, title, owner_id, project')
+    .select('task_id, title, owner_id, project, priority_bucket')
     .eq('task_id', parentTaskId)
     .eq('is_deleted', false)
     .single();
@@ -240,8 +296,9 @@ router.post('/tasks/:id/subtask', async (req, res) => {
     }
   }
 
-  // Inherit project from parent task if not specified
+  // Inherit project and priority from parent task unconditionally at creation
   const taskProject = project || parentTask.project;
+  const taskPriorityBucket = parentTask.priority_bucket;
 
   // Create the subtask
   const { data: newSubtask, error: createErr } = await supabase
@@ -250,7 +307,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
       title,
       description,
       status: effectiveStatus,
-      priority,
+      priority_bucket: taskPriorityBucket,
       due_date,
       project: taskProject,
       owner_id,
@@ -385,7 +442,7 @@ router.get('/tasks/:id', async (req, res) => {
   const canView = isOwner || isMember || outranksOwner;
   if (!canView) return res.status(403).json({ error: 'Forbidden' });
 
-  return res.json({ data: task });
+  return res.json({ data: { ...task, status: mapLegacyStatus(task.status) } });
 });
 
 // Return ancestor chain for a task (minimal fields), regardless of access filters
@@ -466,37 +523,28 @@ router.get('/tasks/:id/descendants', async (req, res) => {
 // Update task priority (PUT /tasks/:id/priority) - Manager/Director only
 router.put('/tasks/:id/priority', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
-  const { acting_user_id, priority } = req.body;
+  const { acting_user_id, priority_bucket } = req.body;
   
   if (Number.isNaN(taskId)) return res.status(400).json({ error: 'Invalid task id' });
   if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
-  if (!priority) return res.status(400).json({ error: 'priority is required' });
-
-  // Validate priority value
-  const validPriorities = ['HIGH', 'MEDIUM', 'LOW'];
-  if (!validPriorities.includes(priority.toUpperCase())) {
-    return res.status(400).json({ error: 'Priority must be one of: HIGH, MEDIUM, LOW' });
+  if (!(Number.isInteger(priority_bucket) && priority_bucket >= 1 && priority_bucket <= 10)) {
+    return res.status(400).json({ error: 'priority_bucket must be an integer between 1 and 10' });
   }
 
   // Load acting user to check permissions
   const { data: actingUser, error: actingErr } = await supabase
     .from('users')
-    .select('user_id, access_level, role')
+    .select('user_id')
     .eq('user_id', acting_user_id)
     .single();
   
   if (actingErr) return res.status(500).json({ error: actingErr.message });
   if (!actingUser) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
-  // Check if user has manager/director permissions (access_level > 0)
-  if (actingUser.access_level <= 0) {
-    return res.status(403).json({ error: 'Only managers and directors can change task priority' });
-  }
-
   // Load the task to check if it exists and get current details
   const { data: task, error: taskErr } = await supabase
     .from('tasks')
-    .select('task_id, title, owner_id, priority, is_deleted')
+    .select('task_id, title, owner_id, priority_bucket, is_deleted')
     .eq('task_id', taskId)
     .single();
   
@@ -504,28 +552,15 @@ router.put('/tasks/:id/priority', async (req, res) => {
   if (!task) return res.status(404).json({ error: 'Task not found' });
   if (task.is_deleted) return res.status(400).json({ error: 'Cannot modify deleted task' });
 
-  // Load task owner to check if manager has authority over this task
-  const { data: taskOwner, error: ownerErr } = await supabase
-    .from('users')
-    .select('user_id, access_level')
-    .eq('user_id', task.owner_id)
-    .single();
-  
-  if (ownerErr) return res.status(500).json({ error: ownerErr.message });
-  if (!taskOwner) return res.status(400).json({ error: 'Task owner not found' });
-
-  // Manager can only change priority for tasks owned by users with lower or equal access level
-  if (actingUser.access_level <= taskOwner.access_level && actingUser.user_id !== task.owner_id) {
-    return res.status(403).json({ error: 'You can only change priority for tasks owned by team members with lower access level' });
+  // Only owner can change priority
+  if (task.owner_id !== acting_user_id) {
+    return res.status(403).json({ error: 'Only the task owner can change the priority' });
   }
 
   // Update the task priority
   const { error: updateErr, data: updatedTask } = await supabase
     .from('tasks')
-    .update({
-      priority: priority.toUpperCase(),
-      updated_at: new Date().toISOString()
-    })
+    .update({ priority_bucket, updated_at: new Date().toISOString() })
     .eq('task_id', taskId)
     .select()
     .single();
@@ -534,7 +569,7 @@ router.put('/tasks/:id/priority', async (req, res) => {
 
   return res.json({ 
     success: true, 
-    message: `Task "${task.title}" priority updated to ${priority.toUpperCase()}`,
+    message: `Task "${task.title}" priority updated to P${priority_bucket}`,
     data: updatedTask
   });
 });
@@ -672,7 +707,7 @@ router.patch('/tasks/:id/status', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
   const { status } = req.body || {};
-  const allowed = new Set(['TO_DO', 'IN_PROGRESS', 'DONE']);
+  const allowed = new Set(['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED']);
 
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
   if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
@@ -696,6 +731,11 @@ router.patch('/tasks/:id/status', async (req, res) => {
     .maybeSingle();
   if (taskErr) return res.status(500).json({ error: taskErr.message });
   if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  // Business rule: cannot change status away from UNASSIGNED if there is no assignee
+  if (task.assignee_id == null && status !== 'UNASSIGNED') {
+    return res.status(400).json({ error: 'Assign someone before changing status' });
+  }
 
   // Owner to compare
   const { data: owner, error: ownerErr } = await supabase
@@ -744,19 +784,25 @@ router.patch('/tasks/:id', async (req, res) => {
 
   // NEW: accept only whitelisted fields
   const body = req.body || {};
-  const allowedStatus = new Set(['TO_DO', 'IN_PROGRESS', 'DONE']);
-  const allowedPriority = new Set(['LOW', 'MEDIUM', 'HIGH']);
+  const allowedStatus = new Set(['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED']);
+  // priority_bucket is numeric 1..10 now
 
   const patch = {};
   if (typeof body.title === 'string') patch.title = body.title.trim();
   if (typeof body.description === 'string') patch.description = body.description;
   if (typeof body.project === 'string') patch.project = body.project.trim();
   if (body.status && allowedStatus.has(body.status)) patch.status = body.status;
-  if (body.priority && allowedPriority.has(body.priority)) patch.priority = body.priority;
+  if (Object.prototype.hasOwnProperty.call(body, 'priority_bucket')) {
+    if (!(Number.isInteger(body.priority_bucket) && body.priority_bucket >= 1 && body.priority_bucket <= 10)) {
+      return res.status(400).json({ error: 'priority_bucket must be an integer between 1 and 10' });
+    }
+    patch.priority_bucket = body.priority_bucket;
+  }
   if (body.due_date) patch.due_date = body.due_date; // ISO date string
   if (body.parent_task_id === null || Number.isInteger(body.parent_task_id)) patch.parent_task_id = body.parent_task_id;
   if (Array.isArray(body.members_id)) patch.members_id = body.members_id.filter((n) => Number.isInteger(n));
   if (Number.isInteger(body.owner_id)) patch.owner_id = body.owner_id;
+  if (body.assignee_id === null || Number.isInteger(body.assignee_id)) patch.assignee_id = body.assignee_id;
 
   if (Object.keys(patch).length === 0) {
     return res.status(400).json({ error: 'No editable fields provided' });
@@ -783,6 +829,25 @@ router.patch('/tasks/:id', async (req, res) => {
   const outranksOwner = owner && acting.access_level > owner.access_level;
   const canEdit = isOwner || isMember || outranksOwner;
   if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
+  // Enforce: only the owner can change priority_bucket
+  if (Object.prototype.hasOwnProperty.call(patch, 'priority_bucket') && !isOwner) {
+    return res.status(403).json({ error: 'Only the task owner can change the priority' });
+  }
+
+  // Derive next values to validate business rules
+  const nextAssignee = Object.prototype.hasOwnProperty.call(patch, 'assignee_id') ? patch.assignee_id : task.assignee_id;
+  const hasStatusPatch = Object.prototype.hasOwnProperty.call(patch, 'status');
+  const nextStatus = hasStatusPatch ? patch.status : task.status;
+
+  // Rule: if no assignee, status must be UNASSIGNED
+  if (nextAssignee == null && hasStatusPatch && patch.status !== 'UNASSIGNED') {
+    return res.status(400).json({ error: 'Assign someone before changing status' });
+  }
+
+  // Rule: if adding an assignee and status not explicitly set or set UNASSIGNED, auto-set to ONGOING
+  if (nextAssignee != null && (!hasStatusPatch || patch.status === 'UNASSIGNED')) {
+    patch.status = 'ONGOING';
+  }
   if (patch.owner_id != null && patch.owner_id !== task.owner_id) {
     const { data: newOwner, error: newOwnerErr } = await supabase
       .from('users')
