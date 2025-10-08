@@ -11,7 +11,12 @@ import {
   CircularProgress,
   Alert,
   Paper,
-  Button
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import FolderIcon from '@mui/icons-material/Folder';
@@ -37,6 +42,12 @@ const ProjectsPage = () => {
   const navigate = useNavigate();
   const [selectedUserId, setSelectedUserId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
+  const [createEndDate, setCreateEndDate] = useState("");
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState("");
 
 
   // Initialize acting user from localStorage
@@ -256,6 +267,76 @@ const ProjectsPage = () => {
     }
   };
 
+  const handleOpenCreate = () => {
+    setCreateError("");
+    setCreateOpen(true);
+  };
+
+  const handleCloseCreate = () => {
+    if (createLoading) return;
+    setCreateOpen(false);
+    setCreateName("");
+    setCreateDescription("");
+    setCreateEndDate("");
+    setCreateError("");
+  };
+
+  const handleCreateProject = async (e) => {
+    e?.preventDefault?.();
+    setCreateError("");
+
+    const name = createName.trim();
+    const description = createDescription.trim();
+    const endDate = createEndDate.trim();
+
+    if (!name) {
+      setCreateError("Project name is required");
+      return;
+    }
+    if (!selectedUserId) {
+      setCreateError("User not authenticated");
+      return;
+    }
+
+    try {
+      setCreateLoading(true);
+      const response = await fetch(`${API_BASE}/projects`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          description: description || undefined,
+          end_date: endDate || undefined,
+          owner_id: selectedUserId,
+          acting_user_id: selectedUserId
+        })
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `Failed to create project (${response.status})`);
+      }
+
+      const json = await response.json();
+      const data = json?.data ?? json;
+      const newId = data?.project_id ?? data?.id;
+      if (!newId) {
+        throw new Error("Project created but no ID returned");
+      }
+
+      // Optionally refresh list, but we navigate to detail
+      setCreateLoading(false);
+      handleCloseCreate();
+      navigate(`/project/${newId}`);
+    } catch (err) {
+      console.error('❌ Create project error:', err);
+      setCreateError(err.message || 'Failed to create project');
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -302,6 +383,7 @@ const ProjectsPage = () => {
 
 
   return (
+    <>
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <Sidebar
         open={sidebarOpen}
@@ -322,16 +404,27 @@ const ProjectsPage = () => {
               </Typography>
             </Box>
             
-            {/* Refresh Button */}
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={handleRefresh}
-              disabled={refreshing}
-              size="small"
-            >
-              {refreshing ? 'Refreshing...' : 'Refresh'}
-            </Button>
+            {/* Actions */}
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleOpenCreate}
+                size="small"
+                disabled={!selectedUserId}
+              >
+                New Project
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                onClick={handleRefresh}
+                disabled={refreshing}
+                size="small"
+              >
+                {refreshing ? 'Refreshing...' : 'Refresh'}
+              </Button>
+            </Stack>
           </Box>
 
 
@@ -470,6 +563,52 @@ const ProjectsPage = () => {
         </Box>
       </Box>
     </Box>
+
+    {/* Create Project Dialog */}
+    <Dialog open={createOpen} onClose={handleCloseCreate} fullWidth maxWidth="sm">
+      <DialogTitle>Create New Project</DialogTitle>
+      <DialogContent>
+        <Box component="form" onSubmit={handleCreateProject} sx={{ mt: 1 }}>
+          <TextField
+            autoFocus
+            margin="dense"
+            label="Project Name"
+            fullWidth
+            required
+            value={createName}
+            onChange={(e) => setCreateName(e.target.value)}
+          />
+          <TextField
+            margin="dense"
+            label="Description"
+            fullWidth
+            multiline
+            minRows={2}
+            value={createDescription}
+            onChange={(e) => setCreateDescription(e.target.value)}
+          />
+          <TextField
+            margin="dense"
+            label="End Date"
+            type="date"
+            fullWidth
+            value={createEndDate}
+            onChange={(e) => setCreateEndDate(e.target.value)}
+            InputLabelProps={{ shrink: true }}
+          />
+          {createError && (
+            <Alert severity="error" sx={{ mt: 2 }}>{createError}</Alert>
+          )}
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={handleCloseCreate} disabled={createLoading}>Cancel</Button>
+        <Button onClick={handleCreateProject} variant="contained" disabled={createLoading}>
+          {createLoading ? 'Creating…' : 'Create Project'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+    </>
   );
 };
 
