@@ -528,18 +528,29 @@ const ProjectComp = () => {
               </Typography>
             )}
             
+            {/* Add project due date display */}
+            {projectData?.endDate && (
+              <Box display="flex" alignItems="center" sx={{ mb: 2 }}>
+                <CalendarTodayIcon sx={{ mr: 1, color: 'text.secondary', fontSize: 20 }} />
+                <Typography variant="body1" color="text.secondary">
+                  Project Due: {formatDate(projectData.endDate)}
+                </Typography>
+                {/* Add overdue indicator if project is past due */}
+                {new Date(projectData.endDate) < new Date() && (
+                  <Chip 
+                    label="OVERDUE" 
+                    size="small" 
+                    color="error" 
+                    sx={{ ml: 1 }}
+                  />
+                )}
+              </Box>
+            )}
+            
             <Stack direction="row" spacing={2} alignItems="center">
               <Typography variant="body1" color="text.secondary">
                 Project overview and task management
               </Typography>
-              {projectData?.tasksArray && (
-                <Chip 
-                  label={`${projectData.tasksArray.length} tasks in sync`}
-                  size="small"
-                  color="info"
-                  variant="outlined"
-                />
-              )}
             </Stack>
           </Box>
 
