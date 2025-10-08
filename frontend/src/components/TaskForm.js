@@ -22,7 +22,7 @@ import Alert from '@mui/material/Alert';
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
-const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], actingUserId }) => {
+const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }) => {
     // Get today's date in YYYY-MM-DD format
     const today = new Date().toISOString().split('T')[0];
 
@@ -364,6 +364,23 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask = null, users = [], ac
   const selectedOwner = users.find(user => user.user_id === formData.owner_id);
   const selectedMembers = formData.members_id.map(id => users.find(user => user.user_id === id)).filter(Boolean);
   const selectedAssignee = users.find(user => user.user_id === formData.assignee_id);
+
+  // Available projects based on your seed data
+  const availableProjects = [
+    'Q3 Launch',
+    'Alpha',
+    'Marketing Campaign',
+    'Finance Review', 
+    'HR Training',
+    'Operations',
+    'Executive',
+    'Security',
+    'Business Development',
+    'Planning',
+    'Data Management',
+    'Compliance',
+    'Simple Projects'
+  ];
 
   return (
     <>

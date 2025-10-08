@@ -27,6 +27,37 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
     localStorage.removeItem('user');
     navigate('/');
   };
+
+  const handleSidebarItemClick = (key) => {
+    // Handle navigation for different sidebar items
+    switch (key) {
+      case 'dashboard':
+        navigate('/tasks'); // Default to tasks page as main dashboard
+        break;
+      case 'tasks':
+        navigate('/tasks');
+        break;
+      case 'projects':
+        navigate('/projects');
+        break;
+      case 'profile':
+        // Profile functionality not yet implemented
+        break;
+      case 'settings':
+        // Settings functionality not yet implemented
+        break;
+      case 'messages':
+        // Messages functionality not yet implemented
+        break;
+      case 'trash':
+        navigate('/trash');
+        break;
+      default:
+        // Call the original onItemClick if provided
+        onItemClick?.(key);
+    }
+  };
+
   return (
     <Drawer
       variant="permanent"
@@ -51,7 +82,7 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
         {items.map((item) => (
           <ListItemButton
             key={item.key}
-            onClick={() => onItemClick?.(item.key)} 
+            onClick={() => handleSidebarItemClick(item.key)}
             sx={{
               ...styles.drawerItemButton,
               justifyContent: open ? 'flex-start' : 'center',

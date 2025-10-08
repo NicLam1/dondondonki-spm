@@ -9,6 +9,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY
 );
 
+
 // Normalize any legacy statuses to the canonical set
 function mapLegacyStatus(status) {
   if (status === 'TO_DO' || status === 'IN_PROGRESS') return 'ONGOING';
@@ -25,6 +26,222 @@ router.get('/users', async (req, res) => {
     .order('user_id');
   if (error) return res.status(500).json({ error: error.message });
   res.json({ data });
+});
+
+// Get all projects with access control
+router.get('/projects', async (req, res) => {
+  console.log('🔥 /projects route HIT!');
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+
+  console.log('📊 Projects request - actingUserId:', actingUserId);
+
+  if (Number.isNaN(actingUserId)) {
+    console.log('❌ Projects - Invalid acting_user_id');
+    return res.status(400).json({ error: 'acting_user_id is required' });
+  }
+
+  try {
+    // Load acting user to check access level
+    const { data: acting, error: actingErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', actingUserId)
+      .single();
+    
+    if (actingErr) {
+      console.log('❌ Projects - Error loading acting user:', actingErr);
+      return res.status(500).json({ error: actingErr.message });
+    }
+    if (!acting) {
+      console.log('❌ Projects - Acting user not found');
+      return res.status(400).json({ error: 'Invalid acting_user_id' });
+    }
+
+    console.log('✅ Projects - Acting user loaded:', acting);
+
+    // Get all projects
+    const { data: allProjects, error: projectsErr } = await supabase
+      .from('projects')
+      .select('*')
+      .order('project_id');
+    
+    if (projectsErr) {
+      console.log('❌ Projects - Error loading projects:', projectsErr);
+      return res.status(500).json({ error: projectsErr.message });
+    }
+
+    console.log('📊 Projects - Raw projects data:', allProjects);
+
+    // Filter projects based on access level - same hierarchy logic as tasks
+    if (acting.access_level === 0) {
+      // Staff: only see projects they own
+      const filtered = (allProjects || []).filter(project => project.owner_id === actingUserId);
+      console.log('👤 Staff user - filtered projects:', filtered);
+      return res.json({ data: filtered });
+    } else {
+      // Manager/Director: see own projects and projects from users with lower access levels
+      const { data: allUsers, error: usersErr } = await supabase
+        .from('users')
+        .select('user_id, access_level');
+      if (usersErr) {
+        console.log('❌ Projects - Error loading users:', usersErr);
+        return res.status(500).json({ error: usersErr.message });
+      }
+
+      const allowedOwnerIds = new Set([
+        actingUserId,
+        ...allUsers.filter(u => u.access_level < acting.access_level).map(u => u.user_id)
+      ]);
+
+      const filtered = (allProjects || []).filter(project => allowedOwnerIds.has(project.owner_id));
+      console.log('👑 Manager/Director user - filtered projects:', filtered);
+      return res.json({ data: filtered });
+    }
+  } catch (error) {
+    console.log('❌ Projects - Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get individual project with access control
+router.get('/projects/:id', async (req, res) => {
+  console.log('🔥 /projects/:id route HIT with ID:', req.params.id);
+  const projectId = parseInt(req.params.id, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+
+  if (Number.isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id' });
+  if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  try {
+    // Load acting user to check access level
+    const { data: acting, error: actingErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', actingUserId)
+      .single();
+    
+    if (actingErr) return res.status(500).json({ error: actingErr.message });
+    if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+    // Get project with all related tasks using simple JOIN
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('project_id', projectId)
+      .single();
+    
+    if (projectErr) return res.status(500).json({ error: projectErr.message });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Load project owner to compare access levels - same hierarchy logic as tasks
+    const { data: owner, error: ownerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', project.owner_id)
+      .single();
+    
+    if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+    const isOwner = project.owner_id === actingUserId;
+    const outranksOwner = owner && (acting.access_level > owner.access_level);
+    const canView = isOwner || outranksOwner;
+
+    if (!canView) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permissions to view this project' });
+    }
+
+    // Get related tasks for this project using project_id foreign key
+    const { data: projectTasks, error: tasksErr } = await supabase
+      .from('tasks')
+      .select('task_id, title, status, priority_bucket, due_date, owner_id, assignee_id, members_id, created_at, updated_at, description')
+      .eq('project_id', projectId)
+      .eq('is_deleted', false)
+      .order('priority_bucket', { ascending: true });
+    
+    if (tasksErr) {
+      console.error('Error fetching project tasks:', tasksErr);
+      // Don't fail the whole request if tasks can't be fetched
+    }
+
+    return res.json({ 
+      data: {
+        ...project,
+        related_tasks: projectTasks || []
+      }
+    });
+  } catch (error) {
+    console.log('❌ Project detail - Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create a new project (POST /projects)
+router.post('/projects', async (req, res) => {
+  console.log('🔥 POST /projects route HIT!');
+  const { 
+    name, 
+    description, 
+    end_date, 
+    owner_id, 
+    acting_user_id 
+  } = req.body || {};
+
+  if (!name || !owner_id || !acting_user_id) {
+    return res.status(400).json({ 
+      error: 'Missing required fields: name, owner_id, and acting_user_id are required' 
+    });
+  }
+
+  try {
+    // Load acting user to check permissions - same hierarchy logic as tasks
+    const { data: acting, error: actingErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', acting_user_id)
+      .single();
+    
+    if (actingErr) return res.status(500).json({ error: actingErr.message });
+    if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+    // Check if acting user can create project for the specified owner
+    if (owner_id !== acting_user_id) {
+      const { data: targetOwner, error: ownerErr } = await supabase
+        .from('users')
+        .select('user_id, access_level')
+        .eq('user_id', owner_id)
+        .single();
+      
+      if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+      if (!targetOwner) return res.status(400).json({ error: 'Owner not found' });
+      
+      if (acting.access_level <= targetOwner.access_level) {
+        return res.status(403).json({ error: 'Insufficient permissions to create project for this owner' });
+      }
+    }
+
+    const insertPayload = {
+      name: name.trim(),
+      description,
+      end_date,
+      owner_id,
+      tasks: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    const { data: created, error: createErr } = await supabase
+      .from('projects')
+      .insert(insertPayload)
+      .select()
+      .single();
+    
+    if (createErr) return res.status(500).json({ error: createErr.message });
+
+    return res.json({ success: true, data: created });
+  } catch (error) {
+    console.log('❌ Create project - Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/tasks', async (req, res) => {
@@ -126,6 +343,7 @@ router.post('/tasks', async (req, res) => {
     priority_bucket, 
     due_date, 
     project, 
+    project_id, // Add support for direct project_id
     owner_id, 
     assignee_id = null,
     members_id = [], 
@@ -167,6 +385,26 @@ router.post('/tasks', async (req, res) => {
     }
   }
 
+  // Auto-find project_id if project name is provided but project_id is not
+  let finalProjectId = project_id || null;
+  if (!finalProjectId && project && project.trim()) {
+    console.log(`🔍 Looking up project by name: "${project.trim()}"`);
+    const { data: foundProject, error: projectErr } = await supabase
+      .from('projects')
+      .select('project_id')
+      .eq('name', project.trim())
+      .maybeSingle();
+    
+    if (projectErr) {
+      console.error('❌ Error looking up project:', projectErr);
+    } else if (foundProject) {
+      finalProjectId = foundProject.project_id;
+      console.log(`✅ Found project: "${project.trim()}" -> ID ${finalProjectId}`);
+    } else {
+      console.log(`⚠️ Project not found: "${project.trim()}"`);
+    }
+  }
+
   // Compute effective status based on assignee
   const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status === 'UNASSIGNED' ? 'ONGOING' : status);
 
@@ -177,6 +415,7 @@ router.post('/tasks', async (req, res) => {
     priority_bucket,
     due_date,
     project,
+    project_id: finalProjectId, // Use the found or provided project_id
     owner_id,
     assignee_id,
     members_id,
@@ -186,6 +425,11 @@ router.post('/tasks', async (req, res) => {
     updated_at: new Date().toISOString()
   };
 
+  console.log('📝 Creating task with payload:', {
+    ...insertPayload,
+    project_linked: finalProjectId ? 'YES' : 'NO'
+  });
+
   const { data: created, error: createErr } = await supabase
     .from('tasks')
     .insert(insertPayload)
@@ -193,8 +437,12 @@ router.post('/tasks', async (req, res) => {
     .single();
   if (createErr) return res.status(500).json({ error: createErr.message });
 
+  // ✅ NO SYNC NEEDED! Foreign key handles the relationship automatically
+  console.log('✅ Task created:', created);
+
   return res.json({ success: true, data: created });
 });
+
 // Create a subtask (POST /tasks/:id/subtask)
 router.post('/tasks/:id/subtask', async (req, res) => {
   const parentTaskId = parseInt(req.params.id, 10);
@@ -300,6 +548,23 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   const taskProject = project || parentTask.project;
   const taskPriorityBucket = parentTask.priority_bucket;
 
+  // Auto-find project_id for subtask if parent has project info
+  let subtaskProjectId = null;
+  if (parentTask.project_id) {
+    // Inherit parent's project_id directly
+    subtaskProjectId = parentTask.project_id;
+  } else if (taskProject && taskProject.trim()) {
+    // Look up project by name
+    const { data: foundProject } = await supabase
+      .from('projects')
+      .select('project_id')
+      .eq('name', taskProject.trim())
+      .maybeSingle();
+    if (foundProject) {
+      subtaskProjectId = foundProject.project_id;
+    }
+  }
+
   // Create the subtask
   const { data: newSubtask, error: createErr } = await supabase
     .from('tasks')
@@ -310,6 +575,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
       priority_bucket: taskPriorityBucket,
       due_date,
       project: taskProject,
+      project_id: subtaskProjectId, // Link to project
       owner_id,
       assignee_id,
       members_id,
@@ -576,7 +842,6 @@ router.put('/tasks/:id/priority', async (req, res) => {
 
 
 
-
 // Soft delete a task (POST /tasks/:id/delete)
 router.post('/tasks/:id/delete', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
@@ -646,12 +911,24 @@ router.post('/tasks/:id/delete', async (req, res) => {
     .select();
 
   console.log('🔥 UPDATE RESULT:', updateResult);
-
-  console.log('🔥 DELETE ERROR:', deleteErr); // ADD THIS
+  console.log('🔥 DELETE ERROR:', deleteErr);
 
   if (deleteErr) return res.status(500).json({ error: deleteErr.message });
 
-  console.log('🔥 DELETE SUCCESS - Updated tasks:', tasksToDelete.length); // ADD THIS
+  console.log('🔥 DELETE SUCCESS - Updated tasks:', tasksToDelete.length);
+
+  // Update project tasks arrays for any projects that had tasks deleted
+  if (updateResult && updateResult.length > 0) {
+    const projectIds = new Set();
+    updateResult.forEach(task => {
+      if (task.project_id) projectIds.add(task.project_id);
+    });
+    
+    // Update each affected project's tasks array
+    for (const projectId of projectIds) {
+      await updateProjectTasksArray(projectId);
+    }
+  }
 
   return res.json({ 
     success: true, 
@@ -685,16 +962,23 @@ router.post('/tasks/:id/restore', async (req, res) => {
   }
 
   // Restore the task
-  const { error: restoreErr } = await supabase
+  const { error: restoreErr, data: restoredTask } = await supabase
     .from('tasks')
     .update({
       is_deleted: false,
       deleted_at: null,
       deleted_by: null
     })
-    .eq('task_id', taskId);
+    .eq('task_id', taskId)
+    .select()
+    .single();
 
   if (restoreErr) return res.status(500).json({ error: restoreErr.message });
+
+  // Update project's tasks array if task is linked to a project
+  if (restoredTask && restoredTask.project_id) {
+    await updateProjectTasksArray(restoredTask.project_id);
+  }
 
   return res.json({ 
     success: true, 
@@ -772,8 +1056,6 @@ router.patch('/tasks/:id/status', async (req, res) => {
 
   return res.json({ data: updated });
 });
-
-// ...existing code...
 
 // NEW: general edit endpoint for multiple fields
 router.patch('/tasks/:id', async (req, res) => {
@@ -880,12 +1162,180 @@ router.patch('/tasks/:id', async (req, res) => {
   return res.json({ data: updated });
 });
 
+// NEW: Add existing task to project
+router.post('/projects/:id/add-task', async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const { task_id, acting_user_id } = req.body || {};
 
+  if (Number.isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id' });
+  if (!task_id || !acting_user_id) return res.status(400).json({ error: 'task_id and acting_user_id are required' });
 
+  try {
+    // Verify user has access to this project
+    const actingUserId = parseInt(acting_user_id, 10);
+    
+    // Load acting user to check access level
+    const { data: acting, error: actingErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', actingUserId)
+      .single();
+    
+    if (actingErr) return res.status(500).json({ error: actingErr.message });
+    if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
-// ...existing code...
-// ...existing code...
+    // Load project to check permissions
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('project_id', projectId)
+      .single();
+    
+    if (projectErr) return res.status(500).json({ error: projectErr.message });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Check permissions (same as project view)
+    const { data: owner, error: ownerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', project.owner_id)
+      .single();
+    
+    if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+    const isOwner = project.owner_id === actingUserId;
+    const outranksOwner = owner && (acting.access_level > owner.access_level);
+    const canAddTask = isOwner || outranksOwner;
+
+    if (!canAddTask) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permissions to add tasks to this project' });
+    }
+
+    // Load task to verify it exists and user can modify it
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('task_id', task_id)
+      .eq('is_deleted', false)
+      .single();
+    
+    if (taskErr) return res.status(500).json({ error: taskErr.message });
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+
+    // Check if user can modify this task
+    const { data: taskOwner, error: taskOwnerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', task.owner_id)
+      .single();
+    
+    if (taskOwnerErr) return res.status(500).json({ error: taskOwnerErr.message });
+
+    const isTaskOwner = task.owner_id === actingUserId;
+    const outranksTaskOwner = taskOwner && (acting.access_level > taskOwner.access_level);
+    const canModifyTask = isTaskOwner || outranksTaskOwner;
+
+    if (!canModifyTask) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permissions to modify this task' });
+    }
+
+    // Simply set the project_id on the task
+    const { error: updateErr, data: updatedTask } = await supabase
+      .from('tasks')
+      .update({ 
+        project_id: projectId,
+        project: project.name, // Also update the project name field
+        updated_at: new Date().toISOString()
+      })
+      .eq('task_id', task_id)
+      .select()
+      .single();
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    return res.json({
+      success: true,
+      message: `Task "${task.title}" added to project "${project.name}"`,
+      data: updatedTask
+    });
+  } catch (error) {
+    console.log('❌ Add task to project - Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// NEW: Remove task from project
+router.post('/projects/:id/remove-task', async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const { task_id, acting_user_id } = req.body || {};
+
+  if (Number.isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id' });
+  if (!task_id || !acting_user_id) return res.status(400).json({ error: 'task_id and acting_user_id are required' });
+
+  try {
+    // Similar permission checks as add-task...
+    const actingUserId = parseInt(acting_user_id, 10);
+    
+    const { data: acting, error: actingErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', actingUserId)
+      .single();
+    
+    if (actingErr) return res.status(500).json({ error: actingErr.message });
+    if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+    // Load task to verify it exists
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('task_id', task_id)
+      .eq('project_id', projectId) // Must be in this project
+      .eq('is_deleted', false)
+      .single();
+    
+    if (taskErr) return res.status(500).json({ error: taskErr.message });
+    if (!task) return res.status(404).json({ error: 'Task not found in this project' });
+
+    // Check permissions (simplified - just task owner or higher access)
+    const { data: taskOwner, error: taskOwnerErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', task.owner_id)
+      .single();
+    
+    if (taskOwnerErr) return res.status(500).json({ error: taskOwnerErr.message });
+
+    const isTaskOwner = task.owner_id === actingUserId;
+    const outranksTaskOwner = taskOwner && (acting.access_level > taskOwner.access_level);
+    const canModifyTask = isTaskOwner || outranksTaskOwner;
+
+    if (!canModifyTask) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permissions to modify this task' });
+    }
+
+    // Remove project association
+    const { error: updateErr, data: updatedTask } = await supabase
+      .from('tasks')
+      .update({ 
+        project_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('task_id', task_id)
+      .select()
+      .single();
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    return res.json({
+      success: true,
+      message: `Task "${task.title}" removed from project`,
+      data: updatedTask
+    });
+  } catch (error) {
+    console.log('❌ Remove task from project - Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 module.exports = router;
-
-
