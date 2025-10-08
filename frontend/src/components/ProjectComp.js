@@ -698,72 +698,82 @@ const ProjectComp = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {tasks.map((task) => (
-                    <TableRow key={task.task_id} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight="medium">
-                          {task.title}
-                        </Typography>
-                        {task.description && (
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            {task.description.length > 50
-                              ? `${task.description.substring(0, 50)}...`
-                              : task.description}
+                  {tasks.map((task) => {
+                    // Check if task is overdue
+                    const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'COMPLETED';
+                    
+                    return (
+                      <TableRow 
+                        key={task.task_id} 
+                        hover
+                        sx={isOverdue ? { backgroundColor: '#ffebee', borderLeft: '4px solid #f44336' } : undefined}
+                      >
+                        <TableCell>
+                          <Typography variant="body2" fontWeight="medium" sx={isOverdue ? { color: '#d32f2f' } : undefined}>
+                            {task.title}
+                            {isOverdue && <Chip label="OVERDUE" size="small" color="error" sx={{ ml: 1 }} />}
                           </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={task.status}
-                          color={getStatusColor(task.status)}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={task.priority_bucket ? `P${task.priority_bucket}` : 'P?'}
-                          color={task.priority_bucket ? getPriorityColor(`P${task.priority_bucket}`) : 'default'}
-                          size="small"
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Tooltip title={getUserName(task.owner_id)}>
-                          <Avatar sx={{ width: 32, height: 32, fontSize: 14 }}>
-                            {getUserInitials(task.owner_id)}
-                          </Avatar>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell>
-                        {task.assignee_id ? (
-                          <Tooltip title={getUserName(task.assignee_id)}>
+                          {task.description && (
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              {task.description.length > 50
+                                ? `${task.description.substring(0, 50)}...`
+                                : task.description}
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={task.status}
+                            color={getStatusColor(task.status)}
+                            size="small"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={task.priority_bucket ? `P${task.priority_bucket}` : 'P?'}
+                            color={task.priority_bucket ? getPriorityColor(`P${task.priority_bucket}`) : 'default'}
+                            size="small"
+                            variant="outlined"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Tooltip title={getUserName(task.owner_id)}>
                             <Avatar sx={{ width: 32, height: 32, fontSize: 14 }}>
-                              {getUserInitials(task.assignee_id)}
+                              {getUserInitials(task.owner_id)}
                             </Avatar>
                           </Tooltip>
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">
-                            Unassigned
+                        </TableCell>
+                        <TableCell>
+                          {task.assignee_id ? (
+                            <Tooltip title={getUserName(task.assignee_id)}>
+                              <Avatar sx={{ width: 32, height: 32, fontSize: 14 }}>
+                                {getUserInitials(task.assignee_id)}
+                              </Avatar>
+                            </Tooltip>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              Unassigned
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={isOverdue ? { color: '#d32f2f', fontWeight: 'bold' } : undefined}>
+                            {formatDate(task.due_date)}
                           </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {formatDate(task.due_date)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="small"
-                          color="error"
-                          startIcon={<RemoveIcon />}
-                          onClick={() => handleRemoveTask(task.task_id)}
-                        >
-                          Remove
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            size="small"
+                            color="error"
+                            startIcon={<RemoveIcon />}
+                            onClick={() => handleRemoveTask(task.task_id)}
+                          >
+                            Remove
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>

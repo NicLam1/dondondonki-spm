@@ -194,16 +194,25 @@ function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAdd
   // owner/members prepared if you want to display later
   void usersById;
 
+  // Check if task is overdue
+  const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'COMPLETED';
+
   return (
-    <Card variant="outlined" sx={styles.taskCard}>
+    <Card variant="outlined" sx={{
+      ...styles.taskCard,
+      ...(isOverdue && { borderColor: "#f44336", backgroundColor: "#ffebee" })
+    }}>
       <CardActionArea onClick={onOpen} sx={styles.taskCardAction}>
         <CardContent sx={styles.taskCardContent}>
           <Stack spacing={1} alignItems="flex-start">
             <Stack direction="row" spacing={1} alignItems="center">
               <StatusChip value={task.assignee_id == null ? 'UNASSIGNED' : task.status} />
               <PriorityChip value={task.priority_bucket} />
+              {isOverdue && <Chip label="OVERDUE" size="small" color="error" />}
             </Stack>
-            <Typography variant="h6">{task.title}</Typography>
+            <Typography variant="h6" sx={isOverdue ? { color: '#d32f2f' } : undefined}>
+              {task.title}
+            </Typography>
             {/* Add Subtask button */}
             <Button
               size="small"
