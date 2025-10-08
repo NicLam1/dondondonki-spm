@@ -1,5 +1,6 @@
 import "../App.css";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from 'react-router-dom';
 import {
   Box,
   Card,
@@ -257,6 +258,7 @@ export default function TasksPage() {
   const [isTaskFormOpen, setIsTaskFormOpen] = useState(false);
   const [selectedTaskForSubtask, setSelectedTaskForSubtask] = useState(null);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
 
   const queryClient = useQueryClient();
@@ -659,6 +661,41 @@ export default function TasksPage() {
     { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
     { key: "trash", icon: <DeleteIcon />, label: "Trash" }, 
   ];
+
+  // NEW: Handle URL task parameter to auto-open task dialog
+  useEffect(() => {
+    const taskId = searchParams.get('task');
+    if (taskId && actingUser) {
+      const taskIdNum = parseInt(taskId, 10);
+      if (Number.isInteger(taskIdNum)) {
+        // Check if task is already in our current tasks list
+        const existingTask = tasks.find(t => t.task_id === taskIdNum);
+        if (existingTask) {
+          setSelectedTask(existingTask);
+          setEditMode(false);
+          setDraft(null);
+        } else {
+          // Fetch the specific task
+          fetchJson(`/tasks/${taskIdNum}`, { acting_user_id: String(actingUser.user_id) })
+            .then(resp => {
+              if (resp?.data) {
+                setSelectedTask(resp.data);
+                setEditMode(false);
+                setDraft(null);
+              }
+            })
+            .catch(e => showError("Unable to load task."));
+        }
+        
+        // Remove task parameter from URL to clean it up
+        setSearchParams(prev => {
+          const newParams = new URLSearchParams(prev);
+          newParams.delete('task');
+          return newParams;
+        });
+      }
+    }
+  }, [searchParams, actingUser, tasks, setSearchParams]);
 
   return (
     <Box sx={styles.root}>

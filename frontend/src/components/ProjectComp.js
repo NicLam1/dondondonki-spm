@@ -709,7 +709,16 @@ const ProjectComp = () => {
                         sx={isOverdue ? { backgroundColor: '#ffebee', borderLeft: '4px solid #f44336' } : undefined}
                       >
                         <TableCell>
-                          <Typography variant="body2" fontWeight="medium" sx={isOverdue ? { color: '#d32f2f' } : undefined}>
+                          <Typography 
+                            variant="body2" 
+                            fontWeight="medium" 
+                            onClick={() => navigate(`/tasks?task=${task.task_id}`)}
+                            sx={{ 
+                              cursor: 'pointer', 
+                              '&:hover': { textDecoration: 'underline', color: 'primary.main' },
+                              ...(isOverdue ? { color: '#d32f2f' } : {})
+                            }}
+                          >
                             {task.title}
                             {isOverdue && <Chip label="OVERDUE" size="small" color="error" sx={{ ml: 1 }} />}
                           </Typography>
