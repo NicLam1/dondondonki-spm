@@ -40,6 +40,12 @@ function StatusChip({ value }) {
 }
 
 function PriorityChip({ value }) {
+  // Handle numeric priority buckets (1-10)
+  if (typeof value === 'number') {
+    const color = value <= 3 ? "error" : value <= 6 ? "warning" : "default";
+    return <Chip label={`P${value}`} color={color} variant="outlined" size="small" />;
+  }
+  // Fallback for old text-based priorities
   const color = value === "HIGH" ? "error" : value === "MEDIUM" ? "warning" : "default";
   return <Chip label={value} color={color} variant="outlined" size="small" />;
 }
@@ -189,7 +195,7 @@ export default function TrashPage() {
                           </Typography>
                           <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
                             <StatusChip value={task.status} />
-                            <PriorityChip value={task.priority} />
+                            <PriorityChip value={task.priority_bucket} />
                             <Typography variant="caption" color="text.secondary">
                               Deleted: {new Date(task.deleted_at).toLocaleDateString()}
                             </Typography>

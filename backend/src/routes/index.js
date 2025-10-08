@@ -662,7 +662,7 @@ router.get('/tasks/deleted', async (req, res) => {
   // Build query for deleted tasks
   let query = supabase
     .from('tasks')
-    .select('task_id, title, description, status, priority, due_date, project, owner_id, members_id, parent_task_id, deleted_at, deleted_by, created_at')
+    .select('task_id, title, description, status, priority_bucket, due_date, project, owner_id, members_id, parent_task_id, deleted_at, deleted_by, created_at')
     .eq('is_deleted', true)
     .order('deleted_at', { ascending: false });
 
