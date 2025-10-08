@@ -46,6 +46,7 @@ import Topbar from "../components/Topbar";
 import DeleteButton from '../components/DeleteButton';
 import PrioritySelector from '../components/PrioritySelector';
 import TaskForm from '../components/TaskForm';
+import ActivityLog from '../components/ActivityLog';
 
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
@@ -148,6 +149,9 @@ const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
       queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
+      if (task?.task_id) {
+        queryClient.invalidateQueries({ queryKey: ["task-activity", task.task_id] });
+      }
     },
   });
 
@@ -620,6 +624,9 @@ export default function TasksPage() {
         queryClient.invalidateQueries({ queryKey: ["tasks"] });
         queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
         queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
+        if (selectedTask?.task_id) {
+          queryClient.invalidateQueries({ queryKey: ["task-activity", selectedTask.task_id] });
+        }
         showSuccess("Task updated");
       }
     },
@@ -1165,6 +1172,12 @@ export default function TasksPage() {
                *   ...
                * </Box>
                */}
+
+              <Divider sx={styles.dialogDivider} />
+
+              <Box sx={styles.dialogSection}>
+                <ActivityLog taskId={selectedTask.task_id} actingUserId={actingUser?.user_id} />
+              </Box>
 
               <Divider sx={styles.dialogDivider} />
 

@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { env } = require('../config/env');
+const { ActivityTypes } = require('../models/activityLog');
+const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
 
 const router = Router();
 
@@ -193,6 +195,23 @@ router.post('/tasks', async (req, res) => {
     .single();
   if (createErr) return res.status(500).json({ error: createErr.message });
 
+  // Activity: created and optional reassignment
+  try {
+    await recordTaskActivity(supabase, {
+      taskId: created.task_id,
+      authorId: acting_user_id,
+      type: ActivityTypes.TASK_CREATED,
+    });
+    if (created.assignee_id != null) {
+      await recordTaskActivity(supabase, {
+        taskId: created.task_id,
+        authorId: acting_user_id,
+        type: ActivityTypes.REASSIGNED,
+        metadata: { from_assignee: null, to_assignee: created.assignee_id },
+      });
+    }
+  } catch (_) {}
+
   return res.json({ success: true, data: created });
 });
 // Create a subtask (POST /tasks/:id/subtask)
@@ -324,6 +343,23 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   if (createErr) {
     return res.status(500).json({ error: 'Failed to create subtask', details: createErr.message });
   }
+
+  // Activity: created and optional reassignment
+  try {
+    await recordTaskActivity(supabase, {
+      taskId: newSubtask.task_id,
+      authorId: acting_user_id,
+      type: ActivityTypes.TASK_CREATED,
+    });
+    if (newSubtask.assignee_id != null) {
+      await recordTaskActivity(supabase, {
+        taskId: newSubtask.task_id,
+        authorId: acting_user_id,
+        type: ActivityTypes.REASSIGNED,
+        metadata: { from_assignee: null, to_assignee: newSubtask.assignee_id },
+      });
+    }
+  } catch (_) {}
 
   return res.json({ 
     success: true, 
@@ -520,6 +556,134 @@ router.get('/tasks/:id/descendants', async (req, res) => {
 
 
 
+// Get activity logs for a task (chronological, with optional pagination)
+router.get('/tasks/:id/activity', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+  const limit = req.query.limit ? Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || 50)) : 50;
+  const offset = req.query.offset ? Math.max(0, parseInt(req.query.offset, 10) || 0) : 0;
+
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+  if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  // Access check: reuse the same logic as fetching a single task
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('task_id', id)
+    .maybeSingle();
+  if (taskErr) return res.status(500).json({ error: taskErr.message });
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { data: acting, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', actingUserId)
+    .maybeSingle();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  const { data: owner, error: ownerErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', task.owner_id)
+    .maybeSingle();
+  if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+  const isOwner = task.owner_id === actingUserId;
+  const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
+  const outranksOwner = owner && acting.access_level > owner.access_level;
+  const canView = isOwner || isMember || outranksOwner;
+  if (!canView) return res.status(403).json({ error: 'Forbidden' });
+
+  // Fetch logs and enrich authors
+  const { data: logs, error: logsErr } = await supabase
+    .from('task_activity_logs')
+    .select('*')
+    .eq('task_id', id)
+    .order('created_at', { ascending: true })
+    .range(offset, offset + (limit - 1));
+  if (logsErr) return res.status(500).json({ error: logsErr.message });
+
+  const authorIds = Array.from(new Set((logs || []).map((l) => l.author_id).filter((v) => Number.isInteger(v))));
+  let usersById = {};
+  if (authorIds.length) {
+    const { data: authors, error: authorsErr } = await supabase
+      .from('users')
+      .select('user_id, full_name, email, role')
+      .in('user_id', authorIds);
+    if (!authorsErr && Array.isArray(authors)) {
+      usersById = Object.fromEntries(authors.map((u) => [u.user_id, u]));
+    }
+  }
+
+  const serialized = (logs || []).map((row) => ({
+    id: row.log_id,
+    taskId: row.task_id,
+    authorId: row.author_id,
+    author: row.author_id ? usersById[row.author_id] || null : null,
+    type: row.type,
+    summary: row.summary,
+    metadata: row.metadata || {},
+    createdAt: row.created_at,
+  }));
+
+  return res.json({ data: serialized, page: { limit, offset, total: serialized.length } });
+});
+
+// Post a new comment into the activity log for a task
+router.post('/tasks/:id/comments', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { acting_user_id, comment } = req.body || {};
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
+  if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
+  const trimmed = (comment || '').toString().trim();
+  if (!trimmed) return res.status(400).json({ error: 'comment is required' });
+
+  // Basic access check: user must be able to view the task
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('task_id', id)
+    .maybeSingle();
+  if (taskErr) return res.status(500).json({ error: taskErr.message });
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { data: acting, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', acting_user_id)
+    .maybeSingle();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  const { data: owner, error: ownerErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', task.owner_id)
+    .maybeSingle();
+  if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+  const isOwner = task.owner_id === acting_user_id;
+  const isMember = Array.isArray(task.members_id) && task.members_id.includes(acting_user_id);
+  const outranksOwner = owner && acting.access_level > owner.access_level;
+  const canView = isOwner || isMember || outranksOwner;
+  if (!canView) return res.status(403).json({ error: 'Forbidden' });
+
+  // Persist as activity log
+  try {
+    await recordTaskActivity(supabase, {
+      taskId: id,
+      authorId: acting_user_id,
+      type: ActivityTypes.COMMENT_ADDED,
+      metadata: { comment_preview: trimmed.slice(0, 140) },
+      summary: `Comment: ${trimmed.slice(0, 140)}`,
+    });
+  } catch (_) {}
+
+  return res.json({ success: true });
+});
+
 // Update task priority (PUT /tasks/:id/priority) - Manager/Director only
 router.put('/tasks/:id/priority', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
@@ -566,6 +730,16 @@ router.put('/tasks/:id/priority', async (req, res) => {
     .single();
 
   if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+  // Activity: priority changed
+  try {
+    await recordTaskActivity(supabase, {
+      taskId,
+      authorId: acting_user_id,
+      type: ActivityTypes.FIELD_EDITED,
+      metadata: { field: 'priority_bucket', from: task.priority_bucket, to: priority_bucket },
+    });
+  } catch (_) {}
 
   return res.json({ 
     success: true, 
@@ -651,6 +825,15 @@ router.post('/tasks/:id/delete', async (req, res) => {
 
   if (deleteErr) return res.status(500).json({ error: deleteErr.message });
 
+  // Activity: task deleted for each affected task
+  try {
+    await recordMultipleTaskActivities(supabase, tasksToDelete.map((tid) => ({
+      taskId: tid,
+      authorId: acting_user_id,
+      type: ActivityTypes.TASK_DELETED,
+    })));
+  } catch (_) {}
+
   console.log('🔥 DELETE SUCCESS - Updated tasks:', tasksToDelete.length); // ADD THIS
 
   return res.json({ 
@@ -695,6 +878,15 @@ router.post('/tasks/:id/restore', async (req, res) => {
     .eq('task_id', taskId);
 
   if (restoreErr) return res.status(500).json({ error: restoreErr.message });
+
+  // Activity: task restored
+  try {
+    await recordTaskActivity(supabase, {
+      taskId,
+      authorId: acting_user_id,
+      type: ActivityTypes.TASK_RESTORED,
+    });
+  } catch (_) {}
 
   return res.json({ 
     success: true, 
@@ -769,6 +961,17 @@ router.patch('/tasks/:id/status', async (req, res) => {
     .maybeSingle();
   if (getErr) return res.status(500).json({ error: getErr.message });
   if (!updated) return res.status(404).json({ error: 'Task not found after update' });
+  // Activity: status change
+  try {
+    if (task.status !== status) {
+      await recordTaskActivity(supabase, {
+        taskId: id,
+        authorId: actingUserId,
+        type: ActivityTypes.STATUS_CHANGED,
+        metadata: { from_status: task.status, to_status: status },
+      });
+    }
+  } catch (_) {}
 
   return res.json({ data: updated });
 });
@@ -876,6 +1079,42 @@ router.patch('/tasks/:id', async (req, res) => {
     .from('tasks').select('*').eq('task_id', id).order('task_id', { ascending: true }).limit(1).maybeSingle();
   if (getErr) return res.status(500).json({ error: getErr.message });
   if (!updated) return res.status(404).json({ error: 'Task not found after update' });
+  // Activity: field-level edits and assignment
+  try {
+    const activities = [];
+    const changed = (field) => Object.prototype.hasOwnProperty.call(patch, field) && patch[field] !== task[field];
+    if (changed('assignee_id')) {
+      activities.push({
+        taskId: id,
+        authorId: actingUserId,
+        type: ActivityTypes.REASSIGNED,
+        metadata: { from_assignee: task.assignee_id, to_assignee: updated.assignee_id },
+      });
+    }
+    if (changed('status')) {
+      activities.push({
+        taskId: id,
+        authorId: actingUserId,
+        type: ActivityTypes.STATUS_CHANGED,
+        metadata: { from_status: task.status, to_status: updated.status },
+      });
+    }
+    const FIELD_KEYS = ['title','description','project','priority_bucket','due_date','owner_id','members_id','parent_task_id'];
+    for (const key of FIELD_KEYS) {
+      if (key === 'priority_bucket' && !Object.prototype.hasOwnProperty.call(patch, key)) continue;
+      if (changed(key)) {
+        activities.push({
+          taskId: id,
+          authorId: actingUserId,
+          type: ActivityTypes.FIELD_EDITED,
+          metadata: { field: key, from: task[key], to: updated[key] },
+        });
+      }
+    }
+    if (activities.length) {
+      await recordMultipleTaskActivities(supabase, activities);
+    }
+  } catch (_) {}
 
   return res.json({ data: updated });
 });
