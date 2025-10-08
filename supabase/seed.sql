@@ -132,3 +132,108 @@ insert into public.tasks (title, description, status, priority_bucket, due_date,
 select 'Simple Standalone Task to be deleted', 'No subtasks, easy to delete', 'UNASSIGNED', 8, current_date + interval '3 days', 'Simple', u_staff.user_id, null, array[]::integer[], false
 from (select user_id from public.users where email = 'staff@example.com') u_staff
 on conflict do nothing;
+
+-- PROJECTS (simplified with tasks column and owner_id)
+insert into public.projects (name, description, end_date, owner_id)
+select 'Q3 Launch', 'Major product launch for Q3', current_date + interval '90 days', u_director.user_id
+from (select user_id from public.users where email = 'director@example.com') u_director
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Alpha', 'Alpha initiative project', current_date + interval '120 days', u_manager.user_id
+from (select user_id from public.users where email = 'manager@example.com') u_manager
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Marketing Campaign', 'Marketing workstream for Q3 launch', current_date + interval '60 days', u_manager.user_id
+from (select user_id from public.users where email = 'manager@example.com') u_manager
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Finance Review', 'Budget and financial planning', current_date + interval '45 days', u_director.user_id
+from (select user_id from public.users where email = 'director@example.com') u_director
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'HR Training', 'Team training and development', current_date + interval '30 days', u_manager.user_id
+from (select user_id from public.users where email = 'manager@example.com') u_manager
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Operations', 'Operational tasks and management', current_date + interval '60 days', u_staff.user_id
+from (select user_id from public.users where email = 'staff@example.com') u_staff
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Executive', 'Executive level tasks', current_date + interval '30 days', u_director.user_id
+from (select user_id from public.users where email = 'director@example.com') u_director
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Security', 'Security and compliance tasks', current_date + interval '75 days', u_director.user_id
+from (select user_id from public.users where email = 'director@example.com') u_director
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Business Development', 'Partnership and business development', current_date + interval '45 days', u_manager.user_id
+from (select user_id from public.users where email = 'manager@example.com') u_manager
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Planning', 'Strategic planning initiatives', current_date + interval '120 days', u_director.user_id
+from (select user_id from public.users where email = 'director@example.com') u_director
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Data Management', 'Data cleanup and management', current_date + interval '90 days', u_staff.user_id
+from (select user_id from public.users where email = 'staff@example.com') u_staff
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Compliance', 'Policy and compliance tasks', current_date + interval '60 days', u_director.user_id
+from (select user_id from public.users where email = 'director@example.com') u_director
+on conflict do nothing;
+
+insert into public.projects (name, description, end_date, owner_id)
+select 'Simple Projects', 'Miscellaneous simple tasks', current_date + interval '30 days', u_staff.user_id
+from (select user_id from public.users where email = 'staff@example.com') u_staff
+on conflict do nothing;
+
+-- Update existing tasks to link to projects
+update public.tasks set project_id = (select project_id from public.projects where name = 'Q3 Launch' limit 1) where project = 'Q3 Launch';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Alpha' limit 1) where project = 'Alpha';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Marketing Campaign' limit 1) where project = 'Marketing';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Finance Review' limit 1) where project = 'Finance';
+update public.tasks set project_id = (select project_id from public.projects where name = 'HR Training' limit 1) where project = 'HR';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Operations' limit 1) where project = 'Ops';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Executive' limit 1) where project = 'Exec';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Security' limit 1) where project = 'Security';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Business Development' limit 1) where project = 'BizDev';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Planning' limit 1) where project = 'Planning';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Data Management' limit 1) where project = 'Data';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Compliance' limit 1) where project = 'Compliance';
+update public.tasks set project_id = (select project_id from public.projects where name = 'Simple Projects' limit 1) where project = 'Simple';
+
+-- Update projects table to include task IDs in the tasks column (FIXED VERSION)
+UPDATE public.projects 
+SET tasks = COALESCE(
+  (
+    SELECT array_agg(task_id ORDER BY task_id) 
+    FROM public.tasks 
+    WHERE public.tasks.project_id = public.projects.project_id
+    AND is_deleted = false
+  ), 
+  '{}'::integer[]
+),
+updated_at = now()
+WHERE project_id IN (
+  SELECT DISTINCT project_id 
+  FROM public.tasks 
+  WHERE project_id IS NOT NULL
+);
+
+-- Also ensure projects without tasks have empty arrays
+UPDATE public.projects 
+SET tasks = '{}'::integer[],
+    updated_at = now()
+WHERE tasks IS NULL;

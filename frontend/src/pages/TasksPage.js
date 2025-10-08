@@ -35,9 +35,11 @@ import MailIcon from "@mui/icons-material/Mail";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddIcon from "@mui/icons-material/Add";
-import DeleteIcon from "@mui/icons-material/Delete"; // ADD THIS LINE
+import DeleteIcon from "@mui/icons-material/Delete"; 
 // import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 // import MenuIcon from '@mui/icons-material/Menu';
+import FolderIcon from '@mui/icons-material/Folder';
+import TaskIcon from '@mui/icons-material/Task';
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -285,7 +287,7 @@ export default function TasksPage() {
     setIsTaskFormOpen(false);
     setSelectedTaskForSubtask(null);
 
-  // Show success message
+    // Show success message
     setSnackbar({
       open: true,
       message: selectedTaskForSubtask 
@@ -641,6 +643,8 @@ export default function TasksPage() {
 
   const sidebarItems = [
     { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
+     { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "projects", icon: <FolderIcon />, label: "Projects" },
     { key: "profile", icon: <PersonIcon />, label: "Profile" },
     { key: "settings", icon: <SettingsIcon />, label: "Settings" },
     { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
