@@ -1226,7 +1226,7 @@ router.patch('/tasks/:id/status', async (req, res) => {
 
   const isOwner = task.owner_id === actingUserId;
   const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
-  const outranksOwner = owner && acting.access_level > owner.access_level;
+  const outranksOwner = owner && (acting.access_level > owner.access_level);
   const canEdit = isOwner || isMember || outranksOwner;
   if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
 
@@ -1495,6 +1495,20 @@ router.post('/projects/:id/add-task', async (req, res) => {
 
     if (updateErr) return res.status(500).json({ error: updateErr.message });
 
+    // ADD THIS: Also update the project's tasks array
+    const { error: projectUpdateErr } = await supabase
+      .from('projects')
+      .update({
+        tasks: [...(project.tasks || []), task_id],  // Add task_id to array
+        updated_at: new Date().toISOString()
+      })
+      .eq('project_id', projectId);
+
+    if (projectUpdateErr) {
+      console.error('❌ Failed to update project tasks array:', projectUpdateErr);
+      // Don't fail the whole request, just log the error
+    }
+
     return res.json({
       success: true,
       message: `Task "${task.title}" added to project "${project.name}"`,
@@ -1504,6 +1518,8 @@ router.post('/projects/:id/add-task', async (req, res) => {
     console.log('❌ Add task to project - Unexpected error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
+
+  
 });
 
 // NEW: Remove task from project
@@ -1568,6 +1584,29 @@ router.post('/projects/:id/remove-task', async (req, res) => {
       .single();
 
     if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    // ADD THIS: Also update the project's tasks array
+    const { data: currentProject, error: fetchErr } = await supabase
+      .from('projects')
+      .select('tasks')
+      .eq('project_id', projectId)
+      .single();
+
+    if (!fetchErr && currentProject) {
+      const updatedTasks = (currentProject.tasks || []).filter(id => id !== task_id);
+      const { error: projectUpdateErr } = await supabase
+        .from('projects')
+        .update({
+          tasks: updatedTasks,
+          updated_at: new Date().toISOString()
+        })
+        .eq('project_id', projectId);
+
+      if (projectUpdateErr) {
+        console.error('❌ Failed to update project tasks array:', projectUpdateErr);
+        // Don't fail the whole request, just log the error
+      }
+    }
 
     return res.json({
       success: true,

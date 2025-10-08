@@ -75,6 +75,7 @@ const ProjectComp = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [availableTasks, setAvailableTasks] = useState([]);
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
+  const [showMembersDialog, setShowMembersDialog] = useState(false);
   const navigate = useNavigate();
 
 
@@ -411,6 +412,16 @@ const ProjectComp = () => {
   };
 
 
+  const getMembersList = () => {
+    if (!projectData?.members) return [];
+    
+    return Array.from(projectData.members).map(userId => {
+      const user = users.find(u => u.user_id === userId);
+      return user || { user_id: userId, full_name: 'Unknown User', role: 'Unknown' };
+    });
+  };
+
+
   const sidebarItems = [
     { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
     { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
@@ -554,7 +565,7 @@ const ProjectComp = () => {
           </Grid>
          
           <Grid item xs={12} sm={6} md={3}>
-            <Card>
+            <Card sx={{ cursor: 'pointer' }} onClick={() => setShowMembersDialog(true)}>
               <CardContent>
                 <Box display="flex" alignItems="center" justifyContent="space-between">
                   <Box>
@@ -563,6 +574,9 @@ const ProjectComp = () => {
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       Team Members
+                    </Typography>
+                    <Typography variant="caption" color="primary.main">
+                      Click to view
                     </Typography>
                   </Box>
                   <PersonIcon sx={{ fontSize: 40, color: 'info.main' }} />
@@ -793,6 +807,62 @@ const ProjectComp = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowAddTaskDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Members Dialog */}
+      <Dialog 
+        open={showMembersDialog} 
+        onClose={() => setShowMembersDialog(false)} 
+        maxWidth="sm" 
+        fullWidth
+      >
+        <DialogTitle>
+          <Box display="flex" alignItems="center">
+            <PersonIcon sx={{ mr: 1 }} />
+            Project Members ({projectData?.memberCount || 0})
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          {getMembersList().length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+              No members found for this project
+            </Typography>
+          ) : (
+            <List>
+              {getMembersList().map((member, index) => (
+                <ListItem key={member.user_id} divider={index < getMembersList().length - 1}>
+                  <Avatar sx={{ mr: 2 }}>
+                    {getUserInitials(member.user_id)}
+                  </Avatar>
+                  <ListItemText
+                    primary={member.full_name}
+                    secondary={
+                      <Box>
+                        <Typography variant="caption" display="block">
+                          Role: {member.role}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          User ID: {member.user_id}
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                  {member.user_id === projectData?.ownerId && (
+                    <Chip 
+                      label="Owner" 
+                      size="small" 
+                      color="primary" 
+                      variant="outlined"
+                    />
+                  )}
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowMembersDialog(false)}>Close</Button>
         </DialogActions>
       </Dialog>
 
