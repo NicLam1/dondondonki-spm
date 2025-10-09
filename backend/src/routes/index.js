@@ -246,6 +246,55 @@ router.post('/projects', async (req, res) => {
   }
 });
 
+// Update a project (PATCH /projects/:id) - owner only
+router.patch('/projects/:id', async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  if (Number.isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id' });
+
+  const { name, description, end_date, acting_user_id } = req.body || {};
+  if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  try {
+    // Load existing project
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('*')
+      .eq('project_id', projectId)
+      .single();
+    if (projectErr) return res.status(500).json({ error: projectErr.message });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Only owner can update (as requested)
+    if (project.owner_id !== acting_user_id) {
+      return res.status(403).json({ error: 'Only the project owner can update this project' });
+    }
+
+    const patch = {};
+    if (typeof name === 'string' && name.trim()) patch.name = name.trim();
+    if (typeof description === 'string') patch.description = description;
+    if (typeof end_date === 'string') patch.end_date = end_date;
+    if (end_date === null) patch.end_date = null;
+    patch.updated_at = new Date().toISOString();
+
+    if (Object.keys(patch).length === 1) { // only updated_at
+      return res.json({ success: true, data: project });
+    }
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('projects')
+      .update(patch)
+      .eq('project_id', projectId)
+      .select()
+      .single();
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    return res.json({ success: true, data: updated });
+  } catch (error) {
+    console.log('❌ Update project - Unexpected error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.get('/tasks', async (req, res) => {
   // Back-compat: single user filter (?user_id=)
   const singleUserId = req.query.user_id ? parseInt(req.query.user_id, 10) : NaN;

@@ -31,7 +31,8 @@ import {
   DialogActions,
   List,
   ListItem,
-  ListItemText
+  ListItemText,
+  TextField
 } from '@mui/material';
 import { useParams, useNavigate } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -76,6 +77,12 @@ const ProjectComp = () => {
   const [availableTasks, setAvailableTasks] = useState([]);
   const [showAddTaskDialog, setShowAddTaskDialog] = useState(false);
   const [showMembersDialog, setShowMembersDialog] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+  const [editError, setEditError] = useState('');
   const navigate = useNavigate();
 
 
@@ -432,6 +439,53 @@ const ProjectComp = () => {
     { key: "trash", icon: <DeleteIcon />, label: "Trash" },
   ];
 
+  const canEdit = projectData && selectedUserId && (parseInt(selectedUserId, 10) === parseInt(projectData.ownerId, 10));
+
+  const openEditDialog = () => {
+    if (!projectData) return;
+    setEditName(projectData.name || '');
+    setEditDescription(projectData.description || '');
+    // Convert to yyyy-mm-dd for input type=date
+    const d = projectData.endDate ? new Date(projectData.endDate) : null;
+    const yyyyMmDd = d ? new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10) : '';
+    setEditEndDate(yyyyMmDd);
+    setEditError('');
+    setEditOpen(true);
+  };
+
+  const handleEditProject = async (e) => {
+    e?.preventDefault?.();
+    if (!projectData) return;
+    if (!editName.trim()) { setEditError('Project name is required'); return; }
+    try {
+      setEditLoading(true);
+      setEditError('');
+      const response = await fetch(`${API_BASE}/projects/${projectData.id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          description: editDescription,
+          end_date: editEndDate || null,
+          acting_user_id: parseInt(selectedUserId, 10)
+        })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to update project (${response.status})`);
+      }
+      await response.json();
+      setEditOpen(false);
+      setSnackbar({ open: true, message: 'Project updated', severity: 'success' });
+      fetchProjectData();
+    } catch (err) {
+      setEditError(err.message || 'Failed to update project');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
 
   if (loading) {
     return (
@@ -502,8 +556,17 @@ const ProjectComp = () => {
                 </Typography>
               </Box>
               
-              {/* REPLACE Sync buttons with Add Task button */}
+              {/* Actions */}
               <Stack direction="row" spacing={1}>
+                {canEdit && (
+                  <Button
+                    variant="outlined"
+                    onClick={openEditDialog}
+                    size="small"
+                  >
+                    Edit Project
+                  </Button>
+                )}
                 
                 
                 <Button
@@ -893,6 +956,51 @@ const ProjectComp = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowMembersDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Project Dialog */}
+      <Dialog open={editOpen} onClose={() => (!editLoading && setEditOpen(false))} fullWidth maxWidth="sm">
+        <DialogTitle>Edit Project</DialogTitle>
+        <DialogContent>
+          <Box component="form" onSubmit={handleEditProject} sx={{ mt: 1 }}>
+            <TextField
+              autoFocus
+              margin="dense"
+              label="Project Name"
+              fullWidth
+              required
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+            />
+            <TextField
+              margin="dense"
+              label="Description"
+              fullWidth
+              multiline
+              minRows={2}
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+            />
+            <TextField
+              margin="dense"
+              label="End Date"
+              type="date"
+              fullWidth
+              value={editEndDate}
+              onChange={(e) => setEditEndDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+            />
+            {editError && (
+              <Alert severity="error" sx={{ mt: 2 }}>{editError}</Alert>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditOpen(false)} disabled={editLoading}>Cancel</Button>
+          <Button onClick={handleEditProject} variant="contained" disabled={editLoading}>
+            {editLoading ? 'Saving…' : 'Save Changes'}
+          </Button>
         </DialogActions>
       </Dialog>
 
