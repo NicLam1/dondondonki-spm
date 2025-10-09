@@ -428,7 +428,7 @@ const ProjectComp = () => {
     }
   };
 
-  // Remove member - FIXED  
+  // Remove member - ENHANCED to handle task involvement
   const handleRemoveMember = async (userId) => {
     if (!projectData || !selectedUserId) return;
 
@@ -463,10 +463,21 @@ const ProjectComp = () => {
         }, 1000);
       } else {
         console.error('❌ Failed to remove member:', result);
+        
+        // Check if this is a task involvement issue
+        const errorMessage = result.error || 'Failed to remove member';
+        let userFriendlyMessage = errorMessage;
+        
+        // If the member was re-added due to task involvement, show a helpful message
+        if (errorMessage.includes('task') || result.message?.includes('task')) {
+          const memberName = users.find(u => u.user_id === parseInt(userId))?.full_name || 'This user';
+          userFriendlyMessage = `${memberName} cannot be removed because they are involved in project tasks. Remove them from tasks first.`;
+        }
+        
         setSnackbar({
           open: true,
-          message: result.error || 'Failed to remove member',
-          severity: 'error'
+          message: userFriendlyMessage,
+          severity: 'warning'
         });
       }
     } catch (error) {

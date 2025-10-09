@@ -1877,6 +1877,31 @@ router.delete('/projects/:id/members/:userId', async (req, res) => {
       return res.status(400).json({ error: 'Cannot remove project owner from members' });
     }
 
+    // Get user name for better error messages
+    const { data: targetUser } = await supabase
+      .from('users')
+      .select('user_id, full_name')
+      .eq('user_id', userId)
+      .single();
+
+    const userName = targetUser?.full_name || 'User';
+
+    // Check if user is involved in any project tasks BEFORE attempting removal
+    const { data: userTasks } = await supabase
+      .from('tasks')
+      .select('task_id, title')
+      .eq('project_id', projectId)
+      .eq('is_deleted', false)
+      .or(`owner_id.eq.${userId},assignee_id.eq.${userId},members_id.cs.{${userId}}`);
+
+    if (userTasks && userTasks.length > 0) {
+      return res.status(400).json({ 
+        error: `${userName} cannot be removed because they are involved in ${userTasks.length} project task(s). Remove them from tasks first.`,
+        task_involvement: true,
+        task_count: userTasks.length
+      });
+    }
+
     // Remove from members array (only manual removal, not task-derived)
     const currentMembers = Array.isArray(project.members) ? project.members : [];
     const updatedMembers = currentMembers.filter(id => id !== userId);
@@ -1891,12 +1916,12 @@ router.delete('/projects/:id/members/:userId', async (req, res) => {
 
     if (updateErr) return res.status(500).json({ error: updateErr.message });
 
-    // Auto-update to re-add if they're still involved in tasks
+    // Auto-update to re-add if they're still involved in tasks (shouldn't happen now due to check above)
     await updateProjectMembersFromTasks(projectId);
 
     return res.json({ 
       success: true, 
-      message: 'Member removed from project' 
+      message: `${userName} removed from project` 
     });
   } catch (error) {
     return res.status(500).json({ error: 'Internal server error' });
