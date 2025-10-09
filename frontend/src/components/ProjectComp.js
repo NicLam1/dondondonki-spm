@@ -372,7 +372,7 @@ const ProjectComp = () => {
     }
   };
 
-  // Add member - ENHANCED with immediate UI update
+  // Add member - SIMPLIFIED to avoid double refresh
   const handleAddMember = async (userId) => {
     if (!projectData || !selectedUserId) return;
 
@@ -402,14 +402,8 @@ const ProjectComp = () => {
         // IMMEDIATE close dialog to prevent double-clicks
         setShowInviteDialog(false);
         
-        // FORCE immediate refresh with multiple attempts
+        // SINGLE refresh only
         await fetchProjectData();
-        
-        // Secondary refresh after delay to ensure backend has processed
-        setTimeout(async () => {
-          await fetchProjectData();
-          await fetchAvailableUsers();
-        }, 1000);
       } else {
         console.error('❌ Failed to add member:', result);
         setSnackbar({
@@ -428,7 +422,7 @@ const ProjectComp = () => {
     }
   };
 
-  // Remove member - ENHANCED to handle task involvement
+  // Remove member - SIMPLIFIED to avoid double refresh
   const handleRemoveMember = async (userId) => {
     if (!projectData || !selectedUserId) return;
 
@@ -454,13 +448,8 @@ const ProjectComp = () => {
           severity: 'success'
         });
         
-        // Refresh data immediately and then again after delay
-        fetchProjectData();
-        
-        setTimeout(() => {
-          fetchProjectData();
-          fetchAvailableUsers();
-        }, 1000);
+        // SINGLE refresh only
+        await fetchProjectData();
       } else {
         console.error('❌ Failed to remove member:', result);
         
