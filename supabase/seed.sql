@@ -237,3 +237,42 @@ UPDATE public.projects
 SET tasks = '{}'::integer[],
     updated_at = now()
 WHERE tasks IS NULL;
+
+-- Update existing projects to include owner as member and sync task members (FIXED)
+UPDATE public.projects 
+SET members = COALESCE(
+  (
+    SELECT ARRAY(
+      SELECT DISTINCT member_id
+      FROM (
+        SELECT public.projects.owner_id as member_id
+        UNION
+        SELECT DISTINCT public.tasks.owner_id as member_id
+        FROM public.tasks 
+        WHERE public.tasks.project_id = public.projects.project_id
+        AND public.tasks.is_deleted = false
+        AND public.tasks.owner_id IS NOT NULL
+        UNION
+        SELECT DISTINCT public.tasks.assignee_id as member_id
+        FROM public.tasks 
+        WHERE public.tasks.project_id = public.projects.project_id
+        AND public.tasks.is_deleted = false
+        AND public.tasks.assignee_id IS NOT NULL
+        UNION
+        SELECT DISTINCT unnest(public.tasks.members_id) as member_id
+        FROM public.tasks 
+        WHERE public.tasks.project_id = public.projects.project_id
+        AND public.tasks.is_deleted = false
+        AND public.tasks.members_id IS NOT NULL
+        AND array_length(public.tasks.members_id, 1) > 0
+      ) AS all_members
+      WHERE member_id IS NOT NULL
+    )
+  ), 
+  ARRAY[public.projects.owner_id] -- If no tasks, just include owner
+),
+updated_at = now()
+WHERE project_id IN (
+  SELECT DISTINCT project_id 
+  FROM public.projects
+);

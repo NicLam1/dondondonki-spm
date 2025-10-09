@@ -177,7 +177,7 @@ router.get('/projects/:id', async (req, res) => {
   }
 });
 
-// Create a new project (POST /projects)
+// Create a new project (POST /projects) - UPDATED to include owner as member
 router.post('/projects', async (req, res) => {
   console.log('🔥 POST /projects route HIT!');
   const { 
@@ -227,6 +227,7 @@ router.post('/projects', async (req, res) => {
       end_date,
       owner_id,
       tasks: [],
+      members: [owner_id], // Owner is always a member by default
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -1530,12 +1531,11 @@ router.post('/projects/:id/add-task', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden: insufficient permissions to modify this task' });
     }
 
-    // Simply set the project_id on the task
     const { error: updateErr, data: updatedTask } = await supabase
       .from('tasks')
       .update({ 
         project_id: projectId,
-        project: project.name, // Also update the project name field
+        project: project.name,
         updated_at: new Date().toISOString()
       })
       .eq('task_id', task_id)
@@ -1544,19 +1544,20 @@ router.post('/projects/:id/add-task', async (req, res) => {
 
     if (updateErr) return res.status(500).json({ error: updateErr.message });
 
-    // ADD THIS: Also update the project's tasks array
     const { error: projectUpdateErr } = await supabase
       .from('projects')
       .update({
-        tasks: [...(project.tasks || []), task_id],  // Add task_id to array
+        tasks: [...(project.tasks || []), task_id],
         updated_at: new Date().toISOString()
       })
       .eq('project_id', projectId);
 
     if (projectUpdateErr) {
       console.error('❌ Failed to update project tasks array:', projectUpdateErr);
-      // Don't fail the whole request, just log the error
     }
+
+    // NEW: Auto-update project members when task is added
+    await updateProjectMembersFromTasks(projectId);
 
     return res.json({
       success: true,
@@ -1567,12 +1568,11 @@ router.post('/projects/:id/add-task', async (req, res) => {
     console.log('❌ Add task to project - Unexpected error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
-
-  
 });
 
-// NEW: Remove task from project
+// Update the remove-task endpoint to auto-update members
 router.post('/projects/:id/remove-task', async (req, res) => {
+  // ...existing code until the project update...
   const projectId = parseInt(req.params.id, 10);
   const { task_id, acting_user_id } = req.body || {};
 
@@ -1580,7 +1580,6 @@ router.post('/projects/:id/remove-task', async (req, res) => {
   if (!task_id || !acting_user_id) return res.status(400).json({ error: 'task_id and acting_user_id are required' });
 
   try {
-    // Similar permission checks as add-task...
     const actingUserId = parseInt(acting_user_id, 10);
     
     const { data: acting, error: actingErr } = await supabase
@@ -1592,19 +1591,17 @@ router.post('/projects/:id/remove-task', async (req, res) => {
     if (actingErr) return res.status(500).json({ error: actingErr.message });
     if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
-    // Load task to verify it exists
     const { data: task, error: taskErr } = await supabase
       .from('tasks')
       .select('*')
       .eq('task_id', task_id)
-      .eq('project_id', projectId) // Must be in this project
+      .eq('project_id', projectId)
       .eq('is_deleted', false)
       .single();
     
     if (taskErr) return res.status(500).json({ error: taskErr.message });
     if (!task) return res.status(404).json({ error: 'Task not found in this project' });
 
-    // Check permissions (simplified - just task owner or higher access)
     const { data: taskOwner, error: taskOwnerErr } = await supabase
       .from('users')
       .select('user_id, access_level')
@@ -1621,7 +1618,6 @@ router.post('/projects/:id/remove-task', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden: insufficient permissions to modify this task' });
     }
 
-    // Remove project association
     const { error: updateErr, data: updatedTask } = await supabase
       .from('tasks')
       .update({ 
@@ -1634,7 +1630,6 @@ router.post('/projects/:id/remove-task', async (req, res) => {
 
     if (updateErr) return res.status(500).json({ error: updateErr.message });
 
-    // ADD THIS: Also update the project's tasks array
     const { data: currentProject, error: fetchErr } = await supabase
       .from('projects')
       .select('tasks')
@@ -1653,9 +1648,11 @@ router.post('/projects/:id/remove-task', async (req, res) => {
 
       if (projectUpdateErr) {
         console.error('❌ Failed to update project tasks array:', projectUpdateErr);
-        // Don't fail the whole request, just log the error
       }
     }
+
+    // NEW: Auto-update project members when task is removed
+    await updateProjectMembersFromTasks(projectId);
 
     return res.json({
       success: true,
@@ -1667,5 +1664,291 @@ router.post('/projects/:id/remove-task', async (req, res) => {
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Helper function to update project members from tasks - ENHANCED
+async function updateProjectMembersFromTasks(projectId) {
+  try {
+    // Get current project with manual members AND owner
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('members, owner_id')
+      .eq('project_id', projectId)
+      .single();
+    
+    if (projectErr) {
+      console.error('❌ Failed to get project for member update:', projectErr);
+      return;
+    }
+
+    // Get all tasks in this project to find task-derived members
+    const { data: projectTasks, error: tasksErr } = await supabase
+      .from('tasks')
+      .select('owner_id, assignee_id, members_id')
+      .eq('project_id', projectId)
+      .eq('is_deleted', false);
+    
+    if (tasksErr) {
+      console.error('❌ Failed to get project tasks for member update:', tasksErr);
+      return;
+    }
+
+    // Calculate task-derived members
+    const taskMembers = new Set();
+    (projectTasks || []).forEach(task => {
+
+
+
+      if (task.owner_id) taskMembers.add(task.owner_id);
+      if (task.assignee_id) taskMembers.add(task.assignee_id);
+      if (Array.isArray(task.members_id)) {
+        task.members_id.forEach(id => taskMembers.add(id));
+      }
+    });
+
+    // CRITICAL: Always include project owner and combine with existing members and task members
+    const existingMembers = Array.isArray(project.members) ? project.members : [];
+    const allMembers = [...new Set([
+      project.owner_id, // Always include owner first
+      ...existingMembers, 
+      ...Array.from(taskMembers)
+    ])].filter(id => id !== null && id !== undefined); // Remove any null/undefined values
+
+    console.log('🔄 Updating project members:', {
+      projectId,
+      owner: project.owner_id,
+      existingMembers,
+      taskMembers: Array.from(taskMembers),
+      finalMembers: allMembers,
+      totalCount: allMembers.length
+    });
+
+    // Update the project's members array
+    const { error: updateErr } = await supabase
+      .from('projects')
+      .update({ 
+        members: allMembers,
+        updated_at: new Date().toISOString()
+      })
+      .eq('project_id', projectId);
+
+    if (updateErr) {
+      console.error('❌ Failed to update project members:', updateErr);
+    } else {
+      console.log('✅ Updated project members:', { projectId, totalMembers: allMembers.length });
+    }
+  } catch (error) {
+    console.error('❌ Error in updateProjectMembersFromTasks:', error);
+  }
+}
+
+// NEW: Add member to project manually (POST /projects/:id/members) - DEBUGGED
+router.post('/projects/:id/members', async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const { user_id, acting_user_id } = req.body || {};
+
+  console.log('🔥 Add member request:', { projectId, user_id, acting_user_id, body: req.body });
+
+  if (Number.isNaN(projectId)) return res.status(400).json({ error: 'Invalid project id' });
+  if (!user_id || !acting_user_id) return res.status(400).json({ error: 'user_id and acting_user_id are required' });
+
+  try {
+    // Get project
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('project_id, owner_id, members')
+      .eq('project_id', projectId)
+      .single();
+    
+    console.log('📊 Project data:', { project, error: projectErr });
+    
+    if (projectErr) return res.status(500).json({ error: projectErr.message });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Use parseInt to ensure proper comparison
+    const actingUserIdInt = parseInt(acting_user_id, 10);
+    const userIdInt = parseInt(user_id, 10);
+    
+    console.log('🔍 Permission check:', { 
+      projectOwner: project.owner_id, 
+      actingUser: actingUserIdInt,
+      isOwner: project.owner_id === actingUserIdInt 
+    });
+
+    if (project.owner_id !== actingUserIdInt) {
+      return res.status(403).json({ error: 'Only project owner can manually add members' });
+    }
+
+    // Verify user exists
+    const { data: targetUser, error: userErr } = await supabase
+      .from('users')
+      .select('user_id, full_name')
+      .eq('user_id', userIdInt)
+      .single();
+    
+    console.log('👤 Target user:', { targetUser, error: userErr });
+    
+    if (userErr || !targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if user is already a member
+    const currentMembers = Array.isArray(project.members) ? project.members : [];
+    
+    console.log('📋 Current members check:', { 
+      currentMembers, 
+      userIdInt, 
+      isAlreadyMember: currentMembers.includes(userIdInt) 
+    });
+
+    if (currentMembers.includes(userIdInt)) {
+      return res.status(400).json({ error: 'User is already a member of this project' });
+    }
+
+    // Add to members array ensuring owner is always included
+    const updatedMembers = [...new Set([
+      project.owner_id, // Always include owner
+      ...currentMembers,
+      userIdInt // Add new member
+    ])].filter(id => id !== null && id !== undefined);
+    
+    console.log('✅ Updated members array:', { 
+      before: currentMembers, 
+      after: updatedMembers 
+    });
+
+    const { error: updateErr } = await supabase
+      .from('projects')
+      .update({ 
+        members: updatedMembers,
+        updated_at: new Date().toISOString()
+      })
+      .eq('project_id', projectId);
+
+    if (updateErr) {
+      console.error('❌ Database update error:', updateErr);
+      return res.status(500).json({ error: updateErr.message });
+    }
+
+    console.log('🎉 Member added successfully');
+
+    return res.json({ 
+      success: true, 
+      message: `${targetUser.full_name} added to project`,
+      data: { 
+        members: updatedMembers,
+        added_user: targetUser
+      }
+    });
+  } catch (error) {
+    console.error('❌ Add member error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// NEW: Remove member from project (DELETE /projects/:id/members/:userId)
+router.delete('/projects/:id/members/:userId', async (req, res) => {
+  const projectId = parseInt(req.params.id, 10);
+  const userId = parseInt(req.params.userId, 10);
+  const { acting_user_id } = req.body || {};
+
+  if (Number.isNaN(projectId) || Number.isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid project or user id' });
+  }
+  if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  try {
+    // Get project
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('project_id, owner_id, members')
+      .eq('project_id', projectId)
+      .single();
+    
+    if (projectErr) return res.status(500).json({ error: projectErr.message });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    // Only project owner can remove members
+    if (project.owner_id !== acting_user_id) {
+      return res.status(403).json({ error: 'Only project owner can remove members' });
+    }
+
+    // Cannot remove project owner
+    if (userId === project.owner_id) {
+      return res.status(400).json({ error: 'Cannot remove project owner from members' });
+    }
+
+    // Remove from members array (only manual removal, not task-derived)
+    const currentMembers = Array.isArray(project.members) ? project.members : [];
+    const updatedMembers = currentMembers.filter(id => id !== userId);
+    
+    const { error: updateErr } = await supabase
+      .from('projects')
+      .update({ 
+        members: updatedMembers,
+        updated_at: new Date().toISOString()
+      })
+      .eq('project_id', projectId);
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    // Auto-update to re-add if they're still involved in tasks
+    await updateProjectMembersFromTasks(projectId);
+
+    return res.json({ 
+      success: true, 
+      message: 'Member removed from project' 
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper function to update project tasks arrays for any projects that had tasks deleted
+async function updateProjectTasksArray(projectId) {
+  try {
+    // Get current project's tasks array
+    const { data: project, error: projectErr } = await supabase
+      .from('projects')
+      .select('tasks')
+      .eq('project_id', projectId)
+      .single();
+    
+    if (projectErr) {
+      console.error('❌ Failed to get project for tasks array update:', projectErr);
+      return;
+    }
+
+    // Get all non-deleted tasks for this project
+    const { data: activeTasks, error: tasksErr } = await supabase
+      .from('tasks')
+      .select('task_id')
+      .eq('project_id', projectId)
+      .eq('is_deleted', false);
+    
+    if (tasksErr) {
+      console.error('❌ Failed to get active tasks for project:', tasksErr);
+      return;
+    }
+
+    // Update the project's tasks array with only active task IDs
+    const activeTaskIds = (activeTasks || []).map(task => task.task_id);
+    
+    const { error: updateErr } = await supabase
+      .from('projects')
+      .update({ 
+        tasks: activeTaskIds,
+        updated_at: new Date().toISOString()
+      })
+      .eq('project_id', projectId);
+
+    if (updateErr) {
+      console.error('❌ Failed to update project tasks array:', updateErr);
+    } else {
+      console.log('✅ Updated project tasks array:', { projectId, taskCount: activeTaskIds.length });
+    }
+  } catch (error) {
+    console.error('❌ Error in updateProjectTasksArray:', error);
+  }
+}
 
 module.exports = router;

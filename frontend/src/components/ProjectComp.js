@@ -83,6 +83,8 @@ const ProjectComp = () => {
   const [editEndDate, setEditEndDate] = useState('');
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState('');
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [availableUsers, setAvailableUsers] = useState([]);
   const navigate = useNavigate();
 
 
@@ -133,11 +135,15 @@ const ProjectComp = () => {
         return;
       }
      
-      // Add the missing timestamp declaration
+      // FORCE fresh data with cache busting
       const timestamp = Date.now();
       const projectResponse = await fetch(`${API_BASE}/projects/${projectId}?acting_user_id=${selectedUserId}&_t=${timestamp}`, {
         credentials: 'include',
-        cache: 'no-cache'
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
       });
      
       if (!projectResponse.ok) {
@@ -152,9 +158,18 @@ const ProjectComp = () => {
       }
      
       const { data: project } = await projectResponse.json();
+      
+      console.log('🔍 Raw project data from API:', project);
      
-      // Transform project data
-    const transformedProject = {
+      // Use related_tasks from the response (fetched via project_id relationship)
+      const projectTasks = project.related_tasks || [];
+      setTasks(projectTasks);
+     
+      // CRITICAL FIX: Calculate members first, then build project data
+      const stats = calculateProjectStatsWithMembers(projectTasks, project);
+      
+      // Transform project data with calculated stats
+      const finalProjectData = {
         id: project.project_id,
         name: project.name,
         description: project.description,
@@ -162,19 +177,14 @@ const ProjectComp = () => {
         ownerId: project.owner_id,
         createdAt: project.created_at,
         updatedAt: project.updated_at,
-        tasksArray: project.tasks || [] // The synchronized tasks array
-      };
-     
-      // Use related_tasks from the response (fetched via project_id relationship)
-      const projectTasks = project.related_tasks || [];
-      setTasks(projectTasks);
-     
-      // Calculate project statistics
-      const stats = calculateProjectStats(projectTasks);
-      setProjectData({
-        ...transformedProject,
+        tasksArray: project.tasks || [],
+        storedMembers: project.members || [],
         ...stats
-      });
+      };
+      
+      console.log('🔍 Final project data with stats:', finalProjectData);
+      
+      setProjectData(finalProjectData);
      
     } catch (err) {
       console.error('Error fetching project data:', err);
@@ -183,6 +193,386 @@ const ProjectComp = () => {
       setLoading(false);
     }
   };
+
+  // FIXED: Calculate stats with proper member handling
+  const calculateProjectStatsWithMembers = (tasks, projectFromApi) => {
+    console.log('🧮 calculateProjectStatsWithMembers called with:', {
+      tasksCount: tasks.length,
+      projectOwner: projectFromApi.owner_id,
+      projectMembers: projectFromApi.members
+    });
+
+    const stats = {
+      totalTasks: tasks.length,
+      completedTasks: 0,
+      ongoingTasks: 0,
+      unassignedTasks: 0,
+      underReviewTasks: 0,
+      priorities: { P1: 0, P2: 0, P3: 0, P4: 0, P5: 0, P6: 0, P7: 0, P8: 0, P9: 0, P10: 0 },
+      taskMembers: new Set(),
+      allMembers: new Set(),
+      recentTasks: [],
+      upcomingDeadlines: []
+    };
+
+    const now = new Date();
+    const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    // Process tasks
+    tasks.forEach(task => {
+      // Status counts
+      switch (task.status) {
+        case 'COMPLETED': stats.completedTasks++; break;
+        case 'ONGOING': stats.ongoingTasks++; break;
+        case 'UNASSIGNED': stats.unassignedTasks++; break;
+        case 'UNDER_REVIEW': stats.underReviewTasks++; break;
+      }
+
+      // Priority counts
+      if (task.priority_bucket && Number.isInteger(task.priority_bucket)) {
+        const bucket = `P${task.priority_bucket}`;
+        if (stats.priorities[bucket] !== undefined) {
+          stats.priorities[bucket]++;
+        }
+      }
+
+      // Collect task-derived members
+      if (task.owner_id) stats.taskMembers.add(task.owner_id);
+      if (task.assignee_id) stats.taskMembers.add(task.assignee_id);
+      if (Array.isArray(task.members_id)) {
+        task.members_id.forEach(id => stats.taskMembers.add(id));
+      }
+
+      // Recent tasks and deadlines logic
+      const createdDate = new Date(task.created_at);
+      if (now - createdDate <= 7 * 24 * 60 * 60 * 1000) {
+        stats.recentTasks.push(task);
+      }
+
+      if (task.due_date) {
+        const dueDate = new Date(task.due_date);
+        if (dueDate >= now && dueDate <= oneWeekFromNow) {
+          stats.upcomingDeadlines.push(task);
+        }
+      }
+    });
+
+    // CRITICAL: Process members from the API data directly
+    const storedMemberIds = Array.isArray(projectFromApi.members) ? projectFromApi.members : [];
+    const ownerId = projectFromApi.owner_id;
+    
+    console.log('🔍 Member calculation inputs:', {
+      storedMemberIds,
+      ownerId,
+      taskMembers: Array.from(stats.taskMembers)
+    });
+
+    // Add all stored members from DB (these include manual invites + task-derived + owner)
+    storedMemberIds.forEach(id => {
+      if (id !== null && id !== undefined) {
+        stats.allMembers.add(id);
+      }
+    });
+
+    // Always ensure owner is included (backup)
+    if (ownerId) {
+      stats.allMembers.add(ownerId);
+    }
+
+    console.log('🔍 Final member calculation:', {
+      allMembers: Array.from(stats.allMembers),
+      memberCount: stats.allMembers.size
+    });
+
+    // Keep backward compatibility
+    stats.members = stats.allMembers;
+    stats.memberCount = Math.max(1, stats.allMembers.size);
+
+    stats.completionRate = stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0;
+    stats.recentTasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    stats.upcomingDeadlines.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+
+    return stats;
+  };
+
+  const getUserName = (userId) => {
+    const user = users.find(u => u.user_id === userId);
+    return user ? user.full_name : 'Unknown User';
+  };
+
+
+  const getUserInitials = (userId) => {
+    const user = users.find(u => u.user_id === userId);
+    if (!user) return 'U';
+    return user.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+  };
+
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'COMPLETED': return 'success';
+      case 'ONGOING': return 'primary';
+      case 'UNDER_REVIEW': return 'warning';
+      case 'UNASSIGNED': return 'default';
+      default: return 'default';
+    }
+  };
+
+
+  const getPriorityColor = (priority) => {
+    // Convert P1-P10 to color scheme similar to TasksPage
+    const bucket = parseInt(priority.replace('P', ''));
+    if (bucket <= 3) return 'error';    // P1-P3: High priority (red)
+    if (bucket <= 7) return 'warning';  // P4-P7: Medium priority (orange)
+    return 'info';                      // P8-P10: Low priority (blue)
+  };
+
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'No due date';
+    return new Date(dateString).toLocaleDateString();
+  };
+
+
+  const handleTaskClick = (taskId) => {
+    navigate(`/tasks?highlight=${taskId}`);
+  };
+
+
+  // Fetch users for invitation - FIXED
+  const fetchAvailableUsers = async () => {
+    if (!selectedUserId || !projectData) return;
+
+    try {
+      const response = await fetch(`${API_BASE}/users`, {
+        credentials: 'include'
+      });
+
+      if (response.ok) {
+        const { data: allUsers } = await response.json();
+        // Filter out already added users and project owner - FIXED logic
+        const currentMembers = projectData.storedMembers || [];
+        const available = allUsers.filter(user => {
+          const isAlreadyMember = currentMembers.includes(user.user_id);
+          const isOwner = user.user_id === projectData.ownerId;
+          return !isAlreadyMember && !isOwner;
+        });
+        console.log('🔍 Available users for invite:', {
+          allUsers: allUsers.length,
+          currentMembers,
+          ownerId: projectData.ownerId,
+          availableCount: available.length,
+          available: available.map(u => ({ id: u.user_id, name: u.full_name }))
+        });
+        setAvailableUsers(available);
+      }
+    } catch (error) {
+      console.error('Error fetching available users:', error);
+      setAvailableUsers([]);
+    }
+  };
+
+  // Add member - ENHANCED with immediate UI update
+  const handleAddMember = async (userId) => {
+    if (!projectData || !selectedUserId) return;
+
+    console.log('🚀 Adding member:', { userId, projectId: projectData.id, actingUser: selectedUserId });
+
+    try {
+      const response = await fetch(`${API_BASE}/projects/${projectData.id}/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: parseInt(userId, 10),
+          acting_user_id: parseInt(selectedUserId, 10)
+        })
+      });
+
+      const result = await response.json();
+      console.log('📡 Add member response:', { status: response.status, result });
+
+      if (response.ok) {
+        setSnackbar({
+          open: true,
+          message: result.message || 'Member added successfully',
+          severity: 'success'
+        });
+        
+        // IMMEDIATE close dialog to prevent double-clicks
+        setShowInviteDialog(false);
+        
+        // FORCE immediate refresh with multiple attempts
+        await fetchProjectData();
+        
+        // Secondary refresh after delay to ensure backend has processed
+        setTimeout(async () => {
+          await fetchProjectData();
+          await fetchAvailableUsers();
+        }, 1000);
+      } else {
+        console.error('❌ Failed to add member:', result);
+        setSnackbar({
+          open: true,
+          message: result.error || 'Failed to add member',
+          severity: 'error'
+        });
+      }
+    } catch (error) {
+      console.error('❌ Network error adding member:', error);
+      setSnackbar({
+        open: true,
+        message: 'Network error: Failed to add member',
+        severity: 'error'
+      });
+    }
+  };
+
+  // Remove member - FIXED  
+  const handleRemoveMember = async (userId) => {
+    if (!projectData || !selectedUserId) return;
+
+    console.log('🗑️ Removing member:', { userId, projectId: projectData.id, actingUser: selectedUserId });
+
+    try {
+      const response = await fetch(`${API_BASE}/projects/${projectData.id}/members/${userId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          acting_user_id: parseInt(selectedUserId, 10)
+        })
+      });
+
+      const result = await response.json();
+      console.log('📡 Remove member response:', { status: response.status, result });
+
+      if (response.ok) {
+        setSnackbar({
+          open: true,
+          message: result.message || 'Member removed successfully',
+          severity: 'success'
+        });
+        
+        // Refresh data immediately and then again after delay
+        fetchProjectData();
+        
+        setTimeout(() => {
+          fetchProjectData();
+          fetchAvailableUsers();
+        }, 1000);
+      } else {
+        console.error('❌ Failed to remove member:', result);
+        setSnackbar({
+          open: true,
+          message: result.error || 'Failed to remove member',
+          severity: 'error'
+        });
+      }
+    } catch (error) {
+      console.error('❌ Network error removing member:', error);
+      setSnackbar({
+        open: true,
+        message: 'Network error: Failed to remove member',
+        severity: 'error'
+      });
+    }
+  };
+
+  // Enhanced members list with membership type detection - FIXED
+  const getMembersList = () => {
+    if (!projectData?.allMembers || projectData.allMembers.size === 0) {
+      console.log('⚠️ No members found in projectData:', projectData);
+      return [];
+    }
+    
+    console.log('🔍 getMembersList called with:', {
+      allMembers: Array.from(projectData.allMembers),
+      ownerId: projectData.ownerId,
+      usersLoaded: users.length
+    });
+    
+    return Array.from(projectData.allMembers).map(userId => {
+      const user = users.find(u => u.user_id === userId);
+      const isFromTask = projectData.taskMembers?.has(userId);
+      const isOwner = userId === projectData.ownerId;
+      
+      // Determine membership type
+      let membershipType;
+      if (isOwner) {
+        membershipType = 'Owner';
+      } else if (isFromTask) {
+        membershipType = 'From Tasks';
+      } else {
+        membershipType = 'Invited';
+      }
+      
+      return {
+        ...(user || { user_id: userId, full_name: 'Unknown User', role: 'Unknown' }),
+        membershipType,
+        canRemove: !isOwner && projectData.ownerId === parseInt(selectedUserId)
+      };
+    });
+  };
+
+
+  const sidebarItems = [
+    { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
+    { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "projects", icon: <FolderIcon />, label: "Projects" },
+    { key: "profile", icon: <PersonIcon />, label: "Profile" },
+    { key: "settings", icon: <SettingsIcon />, label: "Settings" },
+    { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
+    { key: "trash", icon: <DeleteIcon />, label: "Trash" },
+  ];
+
+  const canEdit = projectData && selectedUserId && (parseInt(selectedUserId, 10) === parseInt(projectData.ownerId, 10));
+
+  const openEditDialog = () => {
+    if (!projectData) return;
+    setEditName(projectData.name || '');
+    setEditDescription(projectData.description || '');
+    // Convert to yyyy-mm-dd for input type=date
+    const d = projectData.endDate ? new Date(projectData.endDate) : null;
+    const yyyyMmDd = d ? new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10) : '';
+    setEditEndDate(yyyyMmDd);
+    setEditError('');
+    setEditOpen(true);
+  };
+
+  const handleEditProject = async (e) => {
+    e?.preventDefault?.();
+    if (!projectData) return;
+    if (!editName.trim()) { setEditError('Project name is required'); return; }
+    try {
+      setEditLoading(true);
+      setEditError('');
+      const response = await fetch(`${API_BASE}/projects/${projectData.id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editName.trim(),
+          description: editDescription,
+          end_date: editEndDate || null,
+          acting_user_id: parseInt(selectedUserId, 10)
+        })
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to update project (${response.status})`);
+      }
+      await response.json();
+      setEditOpen(false);
+      setSnackbar({ open: true, message: 'Project updated', severity: 'success' });
+      fetchProjectData();
+    } catch (err) {
+      setEditError(err.message || 'Failed to update project');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
 
   // NEW: Fetch available tasks that can be added to this project
   const fetchAvailableTasks = async () => {
@@ -293,199 +683,6 @@ const ProjectComp = () => {
     }
   };
 
-  useEffect(() => {
-    if (projectData) {
-      fetchAvailableTasks();
-    }
-  }, [projectData, selectedUserId]);
-
-
-  const calculateProjectStats = (tasks) => {
-    const stats = {
-      totalTasks: tasks.length,
-      completedTasks: 0,
-      ongoingTasks: 0,
-      unassignedTasks: 0,
-      underReviewTasks: 0,
-      priorities: { P1: 0, P2: 0, P3: 0, P4: 0, P5: 0, P6: 0, P7: 0, P8: 0, P9: 0, P10: 0 },
-      members: new Set(),
-      recentTasks: [],
-      upcomingDeadlines: []
-    };
-
-    const now = new Date();
-    const oneWeekFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-
-    tasks.forEach(task => {
-      // Status counts
-      switch (task.status) {
-        case 'COMPLETED': stats.completedTasks++; break;
-        case 'ONGOING': stats.ongoingTasks++; break;
-        case 'UNASSIGNED': stats.unassignedTasks++; break;
-        case 'UNDER_REVIEW': stats.underReviewTasks++; break;
-      }
-
-
-      // Priority counts - use priority_bucket instead of priority
-      if (task.priority_bucket && Number.isInteger(task.priority_bucket)) {
-        const bucket = `P${task.priority_bucket}`;
-        if (stats.priorities[bucket] !== undefined) {
-          stats.priorities[bucket]++;
-        }
-      }
-
-
-      // Collect members
-      if (task.owner_id) stats.members.add(task.owner_id);
-      if (task.assignee_id) stats.members.add(task.assignee_id);
-      if (Array.isArray(task.members_id)) {
-        task.members_id.forEach(id => stats.members.add(id));
-      }
-
-
-      // Recent tasks (created in last 7 days)
-      const createdDate = new Date(task.created_at);
-      if (now - createdDate <= 7 * 24 * 60 * 60 * 1000) {
-        stats.recentTasks.push(task);
-      }
-
-
-      // Upcoming deadlines (within next 7 days)
-      if (task.due_date) {
-        const dueDate = new Date(task.due_date);
-        if (dueDate >= now && dueDate <= oneWeekFromNow) {
-          stats.upcomingDeadlines.push(task);
-        }
-      }
-    });
-
-
-    stats.completionRate = stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0;
-    stats.memberCount = stats.members.size;
-   
-    // Sort recent tasks by creation date (newest first)
-    stats.recentTasks.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-   
-    // Sort upcoming deadlines by due date (earliest first)
-    stats.upcomingDeadlines.sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
-
-
-    return stats;
-  };
-
-
-  const getUserName = (userId) => {
-    const user = users.find(u => u.user_id === userId);
-    return user ? user.full_name : 'Unknown User';
-  };
-
-
-  const getUserInitials = (userId) => {
-    const user = users.find(u => u.user_id === userId);
-    if (!user) return 'U';
-    return user.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
-  };
-
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'COMPLETED': return 'success';
-      case 'ONGOING': return 'primary';
-      case 'UNDER_REVIEW': return 'warning';
-      case 'UNASSIGNED': return 'default';
-      default: return 'default';
-    }
-  };
-
-
-  const getPriorityColor = (priority) => {
-    // Convert P1-P10 to color scheme similar to TasksPage
-    const bucket = parseInt(priority.replace('P', ''));
-    if (bucket <= 3) return 'error';    // P1-P3: High priority (red)
-    if (bucket <= 7) return 'warning';  // P4-P7: Medium priority (orange)
-    return 'info';                      // P8-P10: Low priority (blue)
-  };
-
-
-  const formatDate = (dateString) => {
-    if (!dateString) return 'No due date';
-    return new Date(dateString).toLocaleDateString();
-  };
-
-
-  const handleTaskClick = (taskId) => {
-    navigate(`/tasks?highlight=${taskId}`);
-  };
-
-
-  const getMembersList = () => {
-    if (!projectData?.members) return [];
-    
-    return Array.from(projectData.members).map(userId => {
-      const user = users.find(u => u.user_id === userId);
-      return user || { user_id: userId, full_name: 'Unknown User', role: 'Unknown' };
-    });
-  };
-
-
-  const sidebarItems = [
-    { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
-    { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
-    { key: "projects", icon: <FolderIcon />, label: "Projects" },
-    { key: "profile", icon: <PersonIcon />, label: "Profile" },
-    { key: "settings", icon: <SettingsIcon />, label: "Settings" },
-    { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
-    { key: "trash", icon: <DeleteIcon />, label: "Trash" },
-  ];
-
-  const canEdit = projectData && selectedUserId && (parseInt(selectedUserId, 10) === parseInt(projectData.ownerId, 10));
-
-  const openEditDialog = () => {
-    if (!projectData) return;
-    setEditName(projectData.name || '');
-    setEditDescription(projectData.description || '');
-    // Convert to yyyy-mm-dd for input type=date
-    const d = projectData.endDate ? new Date(projectData.endDate) : null;
-    const yyyyMmDd = d ? new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10) : '';
-    setEditEndDate(yyyyMmDd);
-    setEditError('');
-    setEditOpen(true);
-  };
-
-  const handleEditProject = async (e) => {
-    e?.preventDefault?.();
-    if (!projectData) return;
-    if (!editName.trim()) { setEditError('Project name is required'); return; }
-    try {
-      setEditLoading(true);
-      setEditError('');
-      const response = await fetch(`${API_BASE}/projects/${projectData.id}`, {
-        method: 'PATCH',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: editName.trim(),
-          description: editDescription,
-          end_date: editEndDate || null,
-          acting_user_id: parseInt(selectedUserId, 10)
-        })
-      });
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `Failed to update project (${response.status})`);
-      }
-      await response.json();
-      setEditOpen(false);
-      setSnackbar({ open: true, message: 'Project updated', severity: 'success' });
-      fetchProjectData();
-    } catch (err) {
-      setEditError(err.message || 'Failed to update project');
-    } finally {
-      setEditLoading(false);
-    }
-  };
-
 
   if (loading) {
     return (
@@ -559,15 +756,26 @@ const ProjectComp = () => {
               {/* Actions */}
               <Stack direction="row" spacing={1}>
                 {canEdit && (
-                  <Button
-                    variant="outlined"
-                    onClick={openEditDialog}
-                    size="small"
-                  >
-                    Edit Project
-                  </Button>
+                  <>
+                    <Button
+                      variant="outlined"
+                      onClick={openEditDialog}
+                      size="small"
+                    >
+                      Edit Project
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      onClick={() => {
+                        fetchAvailableUsers();
+                        setShowInviteDialog(true);
+                      }}
+                      size="small"
+                    >
+                      Invite Members
+                    </Button>
+                  </>
                 )}
-                
                 
                 <Button
                   variant="contained"
@@ -872,7 +1080,7 @@ const ProjectComp = () => {
         </Card>
       </Box>
 
-      {/* Add Task Dialog - MOVED INSIDE THE MAIN RETURN */}
+      {/* Add Task Dialog */}
       <Dialog open={showAddTaskDialog} onClose={() => setShowAddTaskDialog(false)} maxWidth="md" fullWidth>
         <DialogTitle>Add Task to Project</DialogTitle>
         <DialogContent>
@@ -903,7 +1111,43 @@ const ProjectComp = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Members Dialog */}
+      {/* Invite Members Dialog */}
+      <Dialog open={showInviteDialog} onClose={() => setShowInviteDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Invite Members to Project</DialogTitle>
+        <DialogContent>
+          {availableUsers.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+              {users.length === 0 ? 'Loading users...' : 'No users available to invite'}
+            </Typography>
+          ) : (
+            <List>
+              {availableUsers.map((user) => (
+                <ListItem key={user.user_id} sx={{ px: 0 }}>
+                  <Avatar sx={{ mr: 2 }}>
+                    {getUserInitials(user.user_id)}
+                  </Avatar>
+                  <ListItemText
+                    primary={user.full_name}
+                    secondary={`${user.role} | ${user.email || 'No email'}`}
+                  />
+                  <Button
+                    variant="outlined"
+                    onClick={() => handleAddMember(user.user_id)}
+                    size="small"
+                  >
+                    Invite
+                  </Button>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowInviteDialog(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Enhanced Members Dialog with remove functionality */}
       <Dialog 
         open={showMembersDialog} 
         onClose={() => setShowMembersDialog(false)} 
@@ -936,16 +1180,31 @@ const ProjectComp = () => {
                           Role: {member.role}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          User ID: {member.user_id}
+                          Membership: {member.membershipType}
                         </Typography>
                       </Box>
                     }
                   />
-                  {member.user_id === projectData?.ownerId && (
+                  {member.membershipType === 'Owner' ? (
                     <Chip 
                       label="Owner" 
                       size="small" 
                       color="primary" 
+                      variant="outlined"
+                    />
+                  ) : member.canRemove ? (
+                    <Button
+                      size="small"
+                      color="error"
+                      onClick={() => handleRemoveMember(member.user_id)}
+                    >
+                      Remove
+                    </Button>
+                  ) : (
+                    <Chip 
+                      label="From Tasks" 
+                      size="small" 
+                      color="info" 
                       variant="outlined"
                     />
                   )}
@@ -1004,7 +1263,7 @@ const ProjectComp = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Snackbar - ALSO MOVED INSIDE */}
+      {/* Snackbar */}
       <Snackbar
         open={snackbar.open}
         autoHideDuration={6000}

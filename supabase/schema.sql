@@ -73,6 +73,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'owner_id') THEN
         ALTER TABLE public.projects ADD COLUMN owner_id integer references public.users(user_id) on delete set null;
     END IF;
+    
+    -- Add members column to projects if it doesn't exist
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'projects' AND column_name = 'members') THEN
+        ALTER TABLE public.projects ADD COLUMN members integer[] default '{}';
+    END IF;
 END $$;
 
 -- Updated at trigger
@@ -124,4 +129,3 @@ create index if not exists idx_task_activity_logs_task_created_at on public.task
 create index if not exists idx_task_activity_logs_author on public.task_activity_logs(author_id);
 create index if not exists idx_task_activity_logs_type on public.task_activity_logs(type);
 
- 
