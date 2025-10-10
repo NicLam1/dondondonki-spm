@@ -932,16 +932,80 @@ router.get('/tasks/:id/activity', async (req, res) => {
     }
   }
 
-  const serialized = (logs || []).map((row) => ({
-    id: row.log_id,
-    taskId: row.task_id,
-    authorId: row.author_id,
-    author: row.author_id ? usersById[row.author_id] || null : null,
-    type: row.type,
-    summary: row.summary,
-    metadata: row.metadata || {},
-    createdAt: row.created_at,
-  }));
+  // Collect referenced user IDs inside metadata to replace IDs with names in summaries
+  const referencedUserIds = new Set();
+  for (const row of (logs || [])) {
+    const meta = (row && row.metadata) || {};
+    if (row.type === 'reassigned') {
+      if (Number.isInteger(meta.from_assignee)) referencedUserIds.add(meta.from_assignee);
+      if (Number.isInteger(meta.to_assignee)) referencedUserIds.add(meta.to_assignee);
+    }
+    if (row.type === 'field_edited') {
+      const field = meta.field;
+      if (field === 'owner_id') {
+        if (Number.isInteger(meta.from)) referencedUserIds.add(meta.from);
+        if (Number.isInteger(meta.to)) referencedUserIds.add(meta.to);
+      }
+      if (field === 'members_id') {
+        const fromArr = Array.isArray(meta.from) ? meta.from : [];
+        const toArr = Array.isArray(meta.to) ? meta.to : [];
+        for (const v of fromArr) if (Number.isInteger(v)) referencedUserIds.add(v);
+        for (const v of toArr) if (Number.isInteger(v)) referencedUserIds.add(v);
+      }
+    }
+  }
+  const idsToFetch = Array.from(referencedUserIds).filter((id) => !usersById[id]);
+  if (idsToFetch.length) {
+    const { data: refUsers, error: refErr } = await supabase
+      .from('users')
+      .select('user_id, full_name, email, role')
+      .in('user_id', idsToFetch);
+    if (!refErr && Array.isArray(refUsers)) {
+      for (const u of refUsers) usersById[u.user_id] = u;
+    }
+  }
+
+  const nameFor = (uid) => {
+    if (uid == null) return 'Unassigned';
+    const u = usersById[uid];
+    return (u && u.full_name) ? u.full_name : `User ${uid}`;
+  };
+
+  const serialized = (logs || []).map((row) => {
+    const meta = row.metadata || {};
+    let summary = row.summary;
+    if (row.type === 'reassigned') {
+      const fromName = nameFor(meta.from_assignee);
+      const toName = nameFor(meta.to_assignee);
+      summary = `Reassigned: ${fromName} → ${toName}`;
+    } else if (row.type === 'field_edited') {
+      const field = meta.field;
+      if (field === 'owner_id') {
+        summary = `Edited owner: ${nameFor(meta.from)} → ${nameFor(meta.to)}`;
+      } else if (field === 'members_id') {
+        const fromArr = Array.isArray(meta.from) ? Array.from(new Set(meta.from)) : [];
+        const toArr = Array.isArray(meta.to) ? Array.from(new Set(meta.to)) : [];
+        const fromSet = new Set(fromArr);
+        const toSet = new Set(toArr);
+        const added = toArr.filter((id) => !fromSet.has(id));
+        const removed = fromArr.filter((id) => !toSet.has(id));
+        const parts = [];
+        if (added.length) parts.push(`Added ${added.map(nameFor).join(', ')}`);
+        if (removed.length) parts.push(`Removed ${removed.map(nameFor).join(', ')}`);
+        summary = parts.length ? `Members updated: ${parts.join('; ')}` : 'Members unchanged';
+      }
+    }
+    return {
+      id: row.log_id,
+      taskId: row.task_id,
+      authorId: row.author_id,
+      author: row.author_id ? usersById[row.author_id] || null : null,
+      type: row.type,
+      summary,
+      metadata: row.metadata || {},
+      createdAt: row.created_at,
+    };
+  });
 
   return res.json({ data: serialized, page: { limit, offset, total: serialized.length } });
 });

@@ -375,17 +375,34 @@ export default function TasksPage() {
   useEffect(() => {
     if (!actingUser) return;
     const actingIdStr = String(actingUser.user_id);
-    const prev = prevActingIdRef.current;
     const allowedIds = new Set(allowedUsers.map((u) => String(u.user_id)));
-    if (prev !== actingIdStr) {
+
+    // If nothing selected yet, acting user changed, or selection is invalid,
+    // default to "Me" (acting user) when permitted.
+    const prevActingId = prevActingIdRef.current;
+    const selectionHasInvalid = viewUserIds.some((id) => !allowedIds.has(String(id)));
+    if (
+      (prevActingId !== actingIdStr) ||
+      viewUserIds.length === 0 ||
+      selectionHasInvalid
+    ) {
       prevActingIdRef.current = actingIdStr;
-      if (allowedIds.has(actingIdStr)) setViewUserIds([actingIdStr]);
+      if (allowedIds.has(actingIdStr)) {
+        setViewUserIds([actingIdStr]);
+      } else {
+        const pruned = viewUserIds.filter((id) => allowedIds.has(String(id)));
+        if (pruned.length !== viewUserIds.length) setViewUserIds(pruned);
+      }
       setPage(0);
       return;
     }
+
+    // Keep selection pruned to allowed set when allowed users change
     const pruned = viewUserIds.filter((id) => allowedIds.has(String(id)));
-    if (pruned.length !== viewUserIds.length) setViewUserIds(pruned);
-    setPage(0);
+    if (pruned.length !== viewUserIds.length) {
+      setViewUserIds(pruned);
+      setPage(0);
+    }
   }, [actingUser, allowedUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
@@ -404,6 +421,10 @@ export default function TasksPage() {
       };
       if (actingUser) {
         if (actingUser.access_level > 0) {
+          // Manager view: if nothing is selected in the multi-select, show no tasks
+          if (Array.isArray(viewUserIds) && viewUserIds.length === 0) {
+            return Promise.resolve({ data: [], page: { total: 0 } });
+          }
           if (Array.isArray(viewUserIds) && viewUserIds.length > 0) {
             params.user_ids = viewUserIds.join(",");
           }
@@ -1097,6 +1118,7 @@ export default function TasksPage() {
                 <Typography variant="overline" sx={styles.dialogSectionTitle}>
                   People
                 </Typography>
+                {/* Row 1: Owner and Assignee */}
                 <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
                   <Box sx={styles.dialogInfoItem}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
@@ -1171,7 +1193,11 @@ export default function TasksPage() {
                       </Typography>
                     )}
                   </Box>
-                  <Box sx={styles.dialogInfoItem}>
+                </Stack>
+
+                {/* Row 2: Members */}
+                <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
+                  <Box sx={{ ...styles.dialogInfoItem, flex: 1 }}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Members
                     </Typography>
@@ -1179,12 +1205,16 @@ export default function TasksPage() {
                       <FormControl fullWidth size="small">
                         <Select
                           multiple
-                          value={draft?.members_id ?? []}
+                          value={(draft?.members_id ?? []).map((id) => String(id))}
                           onChange={(e) => {
                             const val = Array.isArray(e.target.value) ? e.target.value : [];
-                            // values from Select are strings; coerce to numbers
-                            const next = val.map((v) => Number(v)).filter((n) => Number.isInteger(n));
-                            setDraft((d) => ({ ...d, members_id: next }));
+                            // Coerce to numbers and de-duplicate
+                            const nextUniqueNumbers = Array.from(new Set(
+                              val
+                                .map((v) => Number(v))
+                                .filter((n) => Number.isInteger(n))
+                            ));
+                            setDraft((d) => ({ ...d, members_id: nextUniqueNumbers }));
                           }}
                           renderValue={(selected) =>
                             (selected || [])
@@ -1293,12 +1323,26 @@ export default function TasksPage() {
                           description: draft.description,
                           project: draft.project,
                           due_date: draft.due_date || null, // allow clearing
-                          members_id: Array.isArray(draft.members_id) ? draft.members_id : [],
                           owner_id: draft.owner_id,
                           assignee_id: draft.assignee_id ?? null,
                           // Backend will auto-set status to ONGOING if assignee is added and status omitted/UNASSIGNED
                           status: draft.assignee_id == null ? 'UNASSIGNED' : (draft.status ?? 'UNASSIGNED'),
                         };
+
+                        // Include members_id ONLY if it actually changed (ignoring order and duplicates)
+                        const nextMembers = Array.isArray(draft.members_id)
+                          ? Array.from(new Set(draft.members_id))
+                          : [];
+                        const currentMembers = Array.isArray(selectedTask.members_id)
+                          ? Array.from(new Set(selectedTask.members_id))
+                          : [];
+                        const sameMembers =
+                          nextMembers.length === currentMembers.length &&
+                          nextMembers.every((id) => currentMembers.includes(id));
+                        if (!sameMembers) {
+                          payload.members_id = nextMembers;
+                        }
+
                         editMutation.mutate(payload);
                       }}
                     >
