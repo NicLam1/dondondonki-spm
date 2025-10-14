@@ -41,7 +41,7 @@ create table if not exists public.tasks (
   -- Note: column name kept as members_id per spec, stored as array to allow multiple members
   members_id integer[] default '{}',
   parent_task_id integer references public.tasks(task_id) on delete set null,
-  attachments jsonb not null default '[]'::jsonb, -- e.g., [{"name":"spec.pdf","url":"..."}]
+  -- attachments jsonb not null default '[]'::jsonb, -- e.g., [{"name":"spec.pdf","url":"..."}]
   is_deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -129,3 +129,19 @@ create index if not exists idx_task_activity_logs_task_created_at on public.task
 create index if not exists idx_task_activity_logs_author on public.task_activity_logs(author_id);
 create index if not exists idx_task_activity_logs_type on public.task_activity_logs(type);
 
+-- Add attachments table
+CREATE TABLE task_attachments (
+    attachment_id SERIAL PRIMARY KEY,
+    task_id INTEGER NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+    file_name VARCHAR(255) NOT NULL,
+    original_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_size INTEGER NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    uploaded_by INTEGER NOT NULL REFERENCES users(user_id),
+    uploaded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Add indexes
+CREATE INDEX idx_task_attachments_task_id ON task_attachments(task_id);
+CREATE INDEX idx_task_attachments_uploaded_by ON task_attachments(uploaded_by);
