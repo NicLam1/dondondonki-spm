@@ -5,6 +5,48 @@ const { ActivityTypes } = require('../models/activityLog');
 const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
 
 const router = Router();
+const multer = require('multer');
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter: (req, file, cb) => {
+    console.log('File received:', file.originalname, 'MIME type:', file.mimetype); // Debug log
+    
+    // Accept common file types (more comprehensive list)
+    const allowedTypes = [
+      // Documents
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'text/csv',
+      // Images
+      'image/jpeg',
+      'image/jpg',
+      'image/png',
+      'image/gif',
+      'image/webp',
+      'image/bmp',
+      'image/tiff',
+      // Archives
+      'application/zip',
+      'application/x-zip-compressed',
+      'application/x-rar-compressed'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      console.log('File type accepted:', file.mimetype);
+      cb(null, true);
+    } else {
+      console.log('File type rejected:', file.mimetype);
+      cb(new Error(`File type not allowed: ${file.mimetype}`), false);
+    }
+  }
+});
 
 const supabase = createClient(
   env.SUPABASE_URL,
@@ -868,7 +910,269 @@ router.get('/tasks/:id/descendants', async (req, res) => {
   return res.json({ data: results });
 });
 
+// TASK ATTACHMENT ROUTES
 
+// Helper function to check task access (reuse your existing logic)
+async function checkTaskAccess(taskId, actingUserId) {
+  // Load acting user
+  const { data: acting, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', actingUserId)
+    .single();
+  if (actingErr || !acting) return false;
+
+  // Load task
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('task_id', taskId)
+    .eq('is_deleted', false)
+    .single();
+  if (taskErr || !task) return false;
+
+  // Load task owner
+  const { data: owner, error: ownerErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', task.owner_id)
+    .single();
+  if (ownerErr) return false;
+
+  // Check access (same logic as your task routes)
+  const isOwner = task.owner_id === actingUserId;
+  const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
+  const outranksOwner = owner && (acting.access_level > owner.access_level);
+  
+  return isOwner || isMember || outranksOwner;
+}
+
+// Upload attachment to task
+router.post('/tasks/:taskId/attachments', upload.single('file'), async (req, res) => {
+  console.log('Upload route hit for task:', req.params.taskId);
+  console.log('Request file:', req.file);
+  console.log('Request body:', req.body);
+
+  const taskId = parseInt(req.params.taskId, 10);
+  const actingUserId = parseInt(req.body.acting_user_id, 10);
+  
+  if (Number.isNaN(taskId) || Number.isNaN(actingUserId)) {
+    console.log('Invalid parameters:', { taskId, actingUserId });
+    return res.status(400).json({ error: 'Invalid task ID or acting_user_id' });
+  }
+
+  if (!req.file) {
+    console.log('No file provided');
+    return res.status(400).json({ error: 'No file provided' });
+  }
+
+  try {
+    // Check task access
+    const hasAccess = await checkTaskAccess(taskId, actingUserId);
+    if (!hasAccess) {
+      console.log('Access denied for user:', actingUserId, 'task:', taskId);
+      return res.status(403).json({ error: 'No access to this task' });
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const fileExtension = req.file.originalname.split('.').pop() || 'bin';
+    const fileName = `${timestamp}_${Math.random().toString(36).substring(7)}.${fileExtension}`;
+    const filePath = `task_${taskId}/${fileName}`;
+
+    console.log('Uploading to path:', filePath);
+
+    // Upload to Supabase Storage
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('task-attachments')
+      .upload(filePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false
+      });
+
+    if (uploadError) {
+      console.error('Supabase upload error:', uploadError);
+      return res.status(500).json({ error: `Failed to upload file: ${uploadError.message}` });
+    }
+
+    console.log('File uploaded successfully:', uploadData);
+
+    // Save attachment record
+    const { data: attachment, error: dbError } = await supabase
+      .from('task_attachments')
+      .insert({
+        task_id: taskId,
+        file_name: fileName,
+        original_name: req.file.originalname,
+        file_path: filePath,
+        file_size: req.file.size,
+        mime_type: req.file.mimetype,
+        uploaded_by: actingUserId
+      })
+      .select(`
+        *,
+        uploader:users!uploaded_by(full_name, email)
+      `)
+      .single();
+
+    if (dbError) {
+      console.error('Database error:', dbError);
+      // Clean up uploaded file
+      await supabase.storage.from('task-attachments').remove([filePath]);
+      return res.status(500).json({ error: `Failed to save attachment: ${dbError.message}` });
+    }
+
+    console.log('Attachment saved successfully:', attachment);
+    res.json({ success: true, data: attachment });
+
+  } catch (error) {
+    console.error('Attachment upload error:', error);
+    res.status(500).json({ error: `Internal server error: ${error.message}` });
+  }
+});
+
+// Get attachments for a task
+router.get('/tasks/:taskId/attachments', async (req, res) => {
+  const taskId = parseInt(req.params.taskId, 10);
+  const actingUserId = parseInt(req.query.acting_user_id, 10);
+
+  if (Number.isNaN(taskId) || Number.isNaN(actingUserId)) {
+    return res.status(400).json({ error: 'Invalid task ID or acting_user_id' });
+  }
+
+  // Check task access using existing logic
+  const hasAccess = await checkTaskAccess(taskId, actingUserId);
+  if (!hasAccess) {
+    return res.status(403).json({ error: 'No access to this task' });
+  }
+
+  try {
+    const { data: attachments, error } = await supabase
+      .from('task_attachments')
+      .select(`
+        *,
+        uploader:users!uploaded_by(full_name, email)
+      `)
+      .eq('task_id', taskId)
+      .order('uploaded_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({ error: 'Failed to fetch attachments' });
+    }
+
+    res.json({ success: true, data: attachments || [] });
+  } catch (error) {
+    console.error('Fetch attachments error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Download attachment (returns signed URL)
+router.get('/tasks/:taskId/attachments/:attachmentId/download', async (req, res) => {
+  const taskId = parseInt(req.params.taskId, 10);
+  const attachmentId = parseInt(req.params.attachmentId, 10);
+  const actingUserId = parseInt(req.query.acting_user_id, 10);
+
+  if (Number.isNaN(taskId) || Number.isNaN(attachmentId) || Number.isNaN(actingUserId)) {
+    return res.status(400).json({ error: 'Invalid parameters' });
+  }
+
+  // Check task access
+  const hasAccess = await checkTaskAccess(taskId, actingUserId);
+  if (!hasAccess) {
+    return res.status(403).json({ error: 'No access to this task' });
+  }
+
+  try {
+    // Get attachment info
+    const { data: attachment, error: attachmentError } = await supabase
+      .from('task_attachments')
+      .select('*')
+      .eq('attachment_id', attachmentId)
+      .eq('task_id', taskId)
+      .single();
+
+    if (attachmentError || !attachment) {
+      return res.status(404).json({ error: 'Attachment not found' });
+    }
+
+    // Generate signed URL
+    const { data: signedUrl, error: urlError } = await supabase.storage
+      .from('task-attachments')
+      .createSignedUrl(attachment.file_path, 3600); // 1 hour
+
+    if (urlError) {
+      return res.status(500).json({ error: 'Failed to generate download link' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        download_url: signedUrl.signedUrl,
+        filename: attachment.original_name,
+        size: attachment.file_size,
+        mime_type: attachment.mime_type
+      }
+    });
+  } catch (error) {
+    console.error('Download error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete attachment (only uploader can delete)
+router.delete('/tasks/:taskId/attachments/:attachmentId', async (req, res) => {
+  const taskId = parseInt(req.params.taskId, 10);
+  const attachmentId = parseInt(req.params.attachmentId, 10);
+  const actingUserId = parseInt(req.body.acting_user_id, 10);
+
+  if (Number.isNaN(taskId) || Number.isNaN(attachmentId) || Number.isNaN(actingUserId)) {
+    return res.status(400).json({ error: 'Invalid parameters' });
+  }
+
+  // Check task access
+  const hasAccess = await checkTaskAccess(taskId, actingUserId);
+  if (!hasAccess) {
+    return res.status(403).json({ error: 'No access to this task' });
+  }
+
+  try {
+    // Get attachment
+    const { data: attachment, error: attachmentError } = await supabase
+      .from('task_attachments')
+      .select('*')
+      .eq('attachment_id', attachmentId)
+      .eq('task_id', taskId)
+      .single();
+
+    if (attachmentError || !attachment) {
+      return res.status(404).json({ error: 'Attachment not found' });
+    }
+
+    // Only uploader can delete
+    if (attachment.uploaded_by !== actingUserId) {
+      return res.status(403).json({ error: 'Can only delete your own attachments' });
+    }
+
+    // Delete from storage
+    await supabase.storage.from('task-attachments').remove([attachment.file_path]);
+
+    // Delete from database
+    const { error: dbError } = await supabase
+      .from('task_attachments')
+      .delete()
+      .eq('attachment_id', attachmentId);
+
+    if (dbError) {
+      return res.status(500).json({ error: 'Failed to delete attachment' });
+    }
+
+    res.json({ success: true, message: 'Attachment deleted successfully' });
+  } catch (error) {
+    console.error('Delete attachment error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 
 // Get activity logs for a task (chronological, with optional pagination)

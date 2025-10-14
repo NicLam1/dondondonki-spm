@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './TaskForm.css';
 import {
 	Dialog,
@@ -19,6 +19,35 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
+
+// Add this after your imports and before the TaskForm component
+async function apiJson(path, { method = "GET", params, body } = {}) {
+  const url = new URL(`${API_BASE}${path}`);
+  if (params) {
+    Object.keys(params).forEach(key => {
+      if (params[key] != null) url.searchParams.append(key, params[key]);
+    });
+  }
+
+  const options = {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' }
+  };
+
+  if (body && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+    options.body = JSON.stringify(body);
+  }
+
+  const response = await fetch(url.toString(), options);
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result.error || `HTTP ${response.status}`);
+  }
+
+  return result;
+}
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
@@ -51,6 +80,9 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }
   const [showMemberDropdown, setShowMemberDropdown] = useState(false);
   const [ownerSearchTerm, setOwnerSearchTerm] = useState('');
   const [showOwnerDropdown, setShowOwnerDropdown] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [showAttachments, setShowAttachments] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (parentTask) {
@@ -222,144 +254,304 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }
     setSubtasks(prev => prev.filter(subtask => subtask.id !== id));
   };
 
-  const handleSubmit = async (e) => {
-    if (e && typeof e.preventDefault === 'function') {
-      e.preventDefault();
+const handleFileSelect = (e) => {
+  const files = Array.from(e.target.files);
+  console.log('Files selected:', files);
+  
+  const validFiles = files.filter(file => {
+    // Max 50MB per file
+    if (file.size > 50 * 1024 * 1024) {
+      showError(`File "${file.name}" is too large. Maximum size is 50MB.`);
+      return false;
     }
-    setIsSubmitting(true);
+    return true;
+  });
+  
+  setSelectedFiles(prev => [...prev, ...validFiles]);
+};
 
-    try {
-      // Client-side validations
-      if (!formData.title || !formData.title.trim()) {
-        showError('Title is required.');
-        setIsSubmitting(false);
-        return;
+const removeFile = (index) => {
+  setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+};
+
+// Update the handleSubmit function to upload attachments after task creation:
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  setIsSubmitting(true);
+
+  try {
+    // STEP 1: Create the task first and WAIT for completion
+    console.log('🚀 Creating task with data:', formData);
+    
+    const endpoint = parentTask 
+      ? `/tasks/${parentTask.task_id}/subtask`
+      : '/tasks';
+    
+    const taskResponse = await apiJson(endpoint, {
+      method: 'POST',
+      body: {
+        ...formData,
+        parent_task_id: parentTask?.task_id || null
       }
-      if (!formData.owner_id) {
-        showError('Owner is required.');
-        setIsSubmitting(false);
-        return;
-      }
-      if (!parentTask) {
-        if (!(Number.isInteger(formData.priority_bucket) || /^\d+$/.test(String(formData.priority_bucket)))) {
-          showError('Priority bucket must be 1–10.');
-          setIsSubmitting(false);
-          return;
-        }
-        const pb = parseInt(String(formData.priority_bucket), 10);
-        if (pb < 1 || pb > 10) {
-          showError('Priority bucket must be 1–10.');
-          setIsSubmitting(false);
-          return;
-        }
-      }
-      if (!formData.due_date || String(formData.due_date).trim() === '') {
-        showError('Due date is required.');
-        setIsSubmitting(false);
-        return;
-      }
-      if (formData.status !== 'UNASSIGNED' && (formData.assignee_id == null || formData.assignee_id === '')) {
-        showError('Please select an assignee or set status to Unassigned.');
-        setIsSubmitting(false);
-        return;
-      }
-      // Create main task or subtask
-      const endpoint = parentTask 
-        ? `/tasks/${parentTask.task_id}/subtask`
-        : '/tasks';
+    });
+
+    if (!taskResponse.success) {
+      throw new Error(taskResponse.error || 'Failed to create task');
+    }
+
+    const createdTask = taskResponse.data;
+    console.log('✅ Task created successfully:', {
+      taskId: createdTask.task_id,
+      title: createdTask.title
+    });
+
+    // STEP 2: Only proceed with attachments if task creation was successful
+    if (selectedFiles.length > 0 && !parentTask) {
+      console.log(`📎 Starting upload of ${selectedFiles.length} files for task ${createdTask.task_id}`);
       
-      // Build request payload explicitly to avoid JSON.stringify on functions
-      let payload;
-      if (parentTask) {
-        const { title, description, status, due_date, owner_id, assignee_id, members_id, acting_user_id } = formData;
-        payload = {
-          title,
-          description,
-          status,
-          due_date,
-          owner_id,
-          assignee_id,
-          members_id,
-          acting_user_id,
-          parent_task_id: parentTask.task_id
-        };
-      } else {
-        const { priority_bucket } = formData;
-        payload = { ...formData, priority_bucket: parseInt(String(priority_bucket), 10), parent_task_id: null };
+      const uploadResults = [];
+      
+      // Upload files sequentially to avoid overwhelming the server
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        console.log(`📤 Uploading file ${i + 1}/${selectedFiles.length}: ${file.name}`);
+        
+        try {
+          const uploadFormData = new FormData();
+          uploadFormData.append('file', file);
+          uploadFormData.append('acting_user_id', actingUserId.toString());
+
+          // Wait for each upload to complete before starting the next
+          const uploadResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/attachments`, {
+            method: 'POST',
+            credentials: 'include',
+            body: uploadFormData
+          });
+
+          const uploadResult = await uploadResponse.json();
+          
+          if (uploadResult.success) {
+            console.log(`✅ File uploaded successfully: ${file.name}`);
+            uploadResults.push({ file: file.name, success: true });
+          } else {
+            console.error(`❌ Failed to upload ${file.name}:`, uploadResult.error);
+            uploadResults.push({ file: file.name, success: false, error: uploadResult.error });
+            showError(`Failed to upload ${file.name}: ${uploadResult.error}`);
+          }
+        } catch (uploadError) {
+          console.error(`❌ Upload error for ${file.name}:`, uploadError);
+          uploadResults.push({ file: file.name, success: false, error: uploadError.message });
+          showError(`Failed to upload ${file.name}: ${uploadError.message}`);
+        }
       }
-
-      const taskResponse = await fetch(`${API_BASE}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify(payload),
-      });
-
-      if (!taskResponse.ok) {
-        const errorData = await taskResponse.json();
-        throw new Error(errorData.error || 'Failed to create task');
+      
+      // Summary of upload results
+      const successfulUploads = uploadResults.filter(r => r.success).length;
+      const failedUploads = uploadResults.filter(r => !r.success).length;
+      
+      console.log(`📊 Upload summary: ${successfulUploads} successful, ${failedUploads} failed`);
+      
+      if (successfulUploads > 0) {
+        showSuccess(`Task "${createdTask.title}" created with ${successfulUploads} attachment(s)!`);
       }
+    }
 
-      const taskResult = await taskResponse.json();
-      const createdTask = taskResult.data;
-
-      // Create subtasks if any (only for main tasks, not subtasks)
-      if (subtasks.length > 0 && !parentTask) {
-        for (const subtask of subtasks) {
-          if (subtask.title.trim()) {
-            const subtaskResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/subtask`, {
+    // STEP 3: Create subtasks if any (only for main tasks, not subtasks)
+    if (subtasks.length > 0 && !parentTask) {
+      console.log(`📋 Creating ${subtasks.length} subtasks...`);
+      
+      for (const subtask of subtasks) {
+        if (subtask.title.trim()) {
+          try {
+            await apiJson(`/tasks/${createdTask.task_id}/subtask`, {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              credentials: 'include',
-              body: JSON.stringify({
-                // inherit parent's project and priority; omit those fields intentionally
-                title: subtask.title,
-                description: subtask.description,
-                status: subtask.status,
-                due_date: subtask.due_date,
-                owner_id: subtask.owner_id,
-                assignee_id: null,
-                members_id: [],
-                acting_user_id: formData.acting_user_id
-              }),
+              body: {
+                ...subtask,
+                acting_user_id: formData.acting_user_id,
+                owner_id: formData.owner_id
+              }
             });
-            
-            if (!subtaskResponse.ok) {
-              console.warn('Failed to create subtask:', subtask.title);
-            }
+            console.log(`✅ Subtask created: ${subtask.title}`);
+          } catch (subtaskError) {
+            console.warn(`❌ Failed to create subtask: ${subtask.title}`, subtaskError);
           }
         }
       }
-
-      onSubmit && onSubmit(createdTask);
-      onClose();
-      
-      // Reset form
-      setFormData({
-        title: '',
-        description: '',
-        status: 'UNASSIGNED',
-        priority_bucket: 5,
-        due_date: '',
-        project: '',
-        owner_id: actingUserId || '',
-        assignee_id: null,
-        members_id: [],
-        acting_user_id: actingUserId || ''
-      });
-      setSubtasks([]);
-      setShowSubtaskForm(false);
-    } catch (error) {
-      console.error('Error creating task:', error);
-      showError(`Failed to create task: ${error.message}`);
-    } finally {
-      setIsSubmitting(false);
     }
-  };
+
+    // STEP 4: Success - close form and notify parent
+    console.log('🎉 Task creation process completed successfully');
+    onSubmit && onSubmit(createdTask);
+    onClose();
+    
+    // Reset form
+    setFormData({
+      title: '',
+      description: '',
+      status: 'UNASSIGNED',
+      priority_bucket: 5,
+      due_date: '',
+      project: '',
+      owner_id: actingUserId || '',
+      assignee_id: null,
+      members_id: [],
+      acting_user_id: actingUserId || ''
+    });
+    setSubtasks([]);
+    setSelectedFiles([]);
+    setShowSubtaskForm(false);
+
+    // Show final success message if no attachments were uploaded
+    if (selectedFiles.length === 0) {
+      showSuccess(`Task "${createdTask.title}" created successfully!`);
+    }
+
+  } catch (error) {
+    console.error('❌ Error in task creation process:', error);
+    showError(`Failed to create task: ${error.message}`);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
+  // const handleSubmit = async (e) => {
+  //   if (e && typeof e.preventDefault === 'function') {
+  //     e.preventDefault();
+  //   }
+  //   setIsSubmitting(true);
+
+  //   try {
+  //     // Client-side validations
+  //     if (!formData.title || !formData.title.trim()) {
+  //       showError('Title is required.');
+  //       setIsSubmitting(false);
+  //       return;
+  //     }
+  //     if (!formData.owner_id) {
+  //       showError('Owner is required.');
+  //       setIsSubmitting(false);
+  //       return;
+  //     }
+  //     if (!parentTask) {
+  //       if (!(Number.isInteger(formData.priority_bucket) || /^\d+$/.test(String(formData.priority_bucket)))) {
+  //         showError('Priority bucket must be 1–10.');
+  //         setIsSubmitting(false);
+  //         return;
+  //       }
+  //       const pb = parseInt(String(formData.priority_bucket), 10);
+  //       if (pb < 1 || pb > 10) {
+  //         showError('Priority bucket must be 1–10.');
+  //         setIsSubmitting(false);
+  //         return;
+  //       }
+  //     }
+  //     if (!formData.due_date || String(formData.due_date).trim() === '') {
+  //       showError('Due date is required.');
+  //       setIsSubmitting(false);
+  //       return;
+  //     }
+  //     if (formData.status !== 'UNASSIGNED' && (formData.assignee_id == null || formData.assignee_id === '')) {
+  //       showError('Please select an assignee or set status to Unassigned.');
+  //       setIsSubmitting(false);
+  //       return;
+  //     }
+  //     // Create main task or subtask
+  //     const endpoint = parentTask 
+  //       ? `/tasks/${parentTask.task_id}/subtask`
+  //       : '/tasks';
+      
+  //     // Build request payload explicitly to avoid JSON.stringify on functions
+  //     let payload;
+  //     if (parentTask) {
+  //       const { title, description, status, due_date, owner_id, assignee_id, members_id, acting_user_id } = formData;
+  //       payload = {
+  //         title,
+  //         description,
+  //         status,
+  //         due_date,
+  //         owner_id,
+  //         assignee_id,
+  //         members_id,
+  //         acting_user_id,
+  //         parent_task_id: parentTask.task_id
+  //       };
+  //     } else {
+  //       const { priority_bucket } = formData;
+  //       payload = { ...formData, priority_bucket: parseInt(String(priority_bucket), 10), parent_task_id: null };
+  //     }
+
+  //     const taskResponse = await fetch(`${API_BASE}${endpoint}`, {
+  //       method: 'POST',
+  //       headers: {
+  //         'Content-Type': 'application/json',
+  //       },
+  //       credentials: 'include',
+  //       body: JSON.stringify(payload),
+  //     });
+
+  //     if (!taskResponse.ok) {
+  //       const errorData = await taskResponse.json();
+  //       throw new Error(errorData.error || 'Failed to create task');
+  //     }
+
+  //     const taskResult = await taskResponse.json();
+  //     const createdTask = taskResult.data;
+
+  //     // Create subtasks if any (only for main tasks, not subtasks)
+  //     if (subtasks.length > 0 && !parentTask) {
+  //       for (const subtask of subtasks) {
+  //         if (subtask.title.trim()) {
+  //           const subtaskResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/subtask`, {
+  //             method: 'POST',
+  //             headers: {
+  //               'Content-Type': 'application/json',
+  //             },
+  //             credentials: 'include',
+  //             body: JSON.stringify({
+  //               // inherit parent's project and priority; omit those fields intentionally
+  //               title: subtask.title,
+  //               description: subtask.description,
+  //               status: subtask.status,
+  //               due_date: subtask.due_date,
+  //               owner_id: subtask.owner_id,
+  //               assignee_id: null,
+  //               members_id: [],
+  //               acting_user_id: formData.acting_user_id
+  //             }),
+  //           });
+            
+  //           if (!subtaskResponse.ok) {
+  //             console.warn('Failed to create subtask:', subtask.title);
+  //           }
+  //         }
+  //       }
+  //     }
+
+  //     onSubmit && onSubmit(createdTask);
+  //     onClose();
+      
+  //     // Reset form
+  //     setFormData({
+  //       title: '',
+  //       description: '',
+  //       status: 'UNASSIGNED',
+  //       priority_bucket: 5,
+  //       due_date: '',
+  //       project: '',
+  //       owner_id: actingUserId || '',
+  //       assignee_id: null,
+  //       members_id: [],
+  //       acting_user_id: actingUserId || ''
+  //     });
+  //     setSubtasks([]);
+  //     setShowSubtaskForm(false);
+  //   } catch (error) {
+  //     console.error('Error creating task:', error);
+  //     showError(`Failed to create task: ${error.message}`);
+  //   } finally {
+  //     setIsSubmitting(false);
+  //   }
+  // };
 
   const selectedOwner = users.find(user => user.user_id === formData.owner_id);
   const selectedMembers = formData.members_id.map(id => users.find(user => user.user_id === id)).filter(Boolean);
@@ -619,6 +811,64 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }
               {parentTask ? 'Only parent task owner and members can be selected' : 'Search and select organization members'}
             </Typography>
           </Box>
+
+{/* Attachments section - only for main tasks, not subtasks */}
+{!parentTask && (
+  <Box>
+    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      Attachments
+    </Typography>
+    
+    <input
+      ref={fileInputRef}
+      type="file"
+      multiple
+      onChange={handleFileSelect}
+      accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.jpg,.jpeg,.png,.gif,.webp,.zip,.jfif"
+      style={{ display: 'none' }}
+    />
+    
+    <Button
+      variant="outlined"
+      size="small"
+      startIcon={<AddIcon />}
+      onClick={() => fileInputRef.current?.click()}
+      sx={{
+        textTransform: 'none',
+        borderColor: '#6A11CB',
+        color: '#6A11CB',
+        '&:hover': {
+          borderColor: '#4E54C8',
+          backgroundColor: 'rgba(106,17,203,0.04)'
+        }
+      }}
+    >
+      📎 Add Attachments
+    </Button>
+    
+    {selectedFiles.length > 0 && (
+      <Box sx={{ mt: 2, p: 1.5, border: '1px solid #e0e0e0', borderRadius: 1, backgroundColor: '#f9f9f9' }}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+          Selected files ({selectedFiles.length}):
+        </Typography>
+        {selectedFiles.map((file, index) => (
+          <Box key={index} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', py: 0.5 }}>
+            <Typography variant="body2">
+              {file.name} <span style={{ color: '#666', fontSize: '12px' }}>({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+            </Typography>
+            <Button
+              size="small"
+              onClick={() => removeFile(index)}
+              sx={{ minWidth: 'auto', p: 0.5, color: '#d32f2f' }}
+            >
+              ×
+            </Button>
+          </Box>
+        ))}
+      </Box>
+    )}
+  </Box>
+)}
 
           {!parentTask && (
             <Box>

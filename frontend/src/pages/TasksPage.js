@@ -44,12 +44,15 @@ import TaskIcon from '@mui/icons-material/Task';
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
+//OUR COMPONENT IMPORTS
+
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import DeleteButton from '../components/DeleteButton';
 import PrioritySelector from '../components/PrioritySelector';
 import TaskForm from '../components/TaskForm';
 import ActivityLog from '../components/ActivityLog';
+import AttachmentManager from '../components/AttachmentManager';
 
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
@@ -292,21 +295,26 @@ export default function TasksPage() {
     }
   }, []);
 
-  const handleTaskCreated = (newTask) => {
-    // Refresh tasks after creation
-    queryClient.invalidateQueries(['tasks']);
-    setIsTaskFormOpen(false);
-    setSelectedTaskForSubtask(null);
+const handleTaskCreated = (newTask) => {
+  // Refresh tasks after creation
+  queryClient.invalidateQueries(['tasks']);
+  setIsTaskFormOpen(false);
+  setSelectedTaskForSubtask(null);
+  
+  // If the created task has attachments and it's currently selected, force refresh
+  if (selectedTask && selectedTask.task_id === newTask.task_id) {
+    setSelectedTask(newTask); // This will trigger AttachmentManager to refetch
+  }
 
-    // Show success message
-    setSnackbar({
-      open: true,
-      message: selectedTaskForSubtask 
-        ? `Subtask "${newTask.title}" created successfully!`
-        : `Task "${newTask.title}" created successfully!`,
-      severity: "success"
-    });
-  };
+  // Show success message
+  setSnackbar({
+    open: true,
+    message: selectedTaskForSubtask 
+      ? `Subtask "${newTask.title}" created successfully!`
+      : `Task "${newTask.title}" created successfully!`,
+    severity: "success"
+  });
+};
 
 
   const openSubtaskForm = (task) => {
@@ -1261,27 +1269,17 @@ export default function TasksPage() {
 
               <Divider sx={styles.dialogDivider} />
 
-              <Box sx={styles.dialogSection}>
-                <Typography variant="overline" sx={styles.dialogSectionTitle}>
-                  Attachments
-                </Typography>
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  flexWrap="wrap"
-                  sx={styles.dialogAttachments}
-                >
-                  {(selectedTask.attachments || []).length === 0 ? (
-                    <Typography variant="caption" color="text.secondary">
-                      No attachments
-                    </Typography>
-                  ) : (
-                    (selectedTask.attachments || []).map((a, idx) => (
-                      <Chip key={idx} label={a.name || "file.pdf"} size="small" />
-                    ))
-                  )}
-                </Stack>
-              </Box>
+            {/*Task Attachments Section */}
+            <Box sx={styles.dialogSection}>
+            <Typography variant="overline" sx={styles.dialogSectionTitle}>
+              Attachments
+            </Typography>
+            <AttachmentManager 
+              taskId={selectedTask.task_id} 
+              actingUserId={actingUser?.user_id} 
+            />
+            </Box>
+
             </DialogContent>
             <DialogActions sx={{ justifyContent: "space-between", px:3}}>
               <Box sx={{ display: "flex", gap: 1 }}>
