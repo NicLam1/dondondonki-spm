@@ -37,6 +37,13 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
       case 'tasks':
         navigate('/tasks');
         break;
+      case 'calendar':
+        if (onItemClick) {
+          onItemClick('calendar');
+        } else {
+          navigate('/calendar');
+        }
+        break;
       case 'projects':
         navigate('/projects');
         break;

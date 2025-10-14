@@ -18,6 +18,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import RestoreIcon from '@mui/icons-material/Restore';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
@@ -103,6 +104,7 @@ export default function TrashPage() {
 
   const sidebarItems = [
     { key: "tasks", label: "Tasks" },
+    { key: "calendar", label: "Calendar", icon: <CalendarMonthIcon /> },
     { key: "trash", label: "Trash", badge: deletedTasks.length > 0 ? deletedTasks.length : undefined },
   ];
 
@@ -116,6 +118,8 @@ export default function TrashPage() {
         onItemClick={(key) => {
           if (key === "tasks") {
             window.location.href = "/tasks";
+          } else if (key === "calendar") {
+            window.location.href = "/calendar";
           }
         }}
       />

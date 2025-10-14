@@ -34,7 +34,7 @@ import {
   ListItemText,
   TextField
 } from '@mui/material';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import FolderIcon from '@mui/icons-material/Folder';
 import TaskIcon from '@mui/icons-material/Task';
@@ -54,6 +54,7 @@ import DashboardIcon from "@mui/icons-material/Dashboard";
 import SettingsIcon from "@mui/icons-material/Settings";
 import MailIcon from "@mui/icons-material/Mail";
 import DeleteIcon from "@mui/icons-material/Delete";
+import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
@@ -86,6 +87,7 @@ const ProjectComp = () => {
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [availableUsers, setAvailableUsers] = useState([]);
   const navigate = useNavigate();
+  const location = useLocation();
 
 
   // Initialize acting user from localStorage
@@ -479,6 +481,18 @@ const ProjectComp = () => {
     }
   };
 
+  const handleViewSchedule = (member) => {
+    if (!member || !member.user_id) return;
+    const params = new URLSearchParams();
+    params.set('user_id', String(member.user_id));
+    if (member.full_name) params.set('user_name', member.full_name);
+    if (projectData?.id) params.set('project_id', String(projectData.id));
+    const returnPath = location ? `${location.pathname}${location.search || ''}` : '';
+    if (returnPath.startsWith('/')) params.set('return_to', returnPath);
+    setShowMembersDialog(false);
+    navigate(`/calendar?${params.toString()}`);
+  };
+
   // Enhanced members list with membership type detection - FIXED
   const getMembersList = () => {
     if (!projectData?.allMembers || projectData.allMembers.size === 0) {
@@ -519,6 +533,7 @@ const ProjectComp = () => {
   const sidebarItems = [
     { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
     { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "calendar", icon: <CalendarMonthIcon />, label: "Calendar" },
     { key: "projects", icon: <FolderIcon />, label: "Projects" },
     { key: "profile", icon: <PersonIcon />, label: "Profile" },
     { key: "settings", icon: <SettingsIcon />, label: "Settings" },
@@ -1185,29 +1200,39 @@ const ProjectComp = () => {
                       </Box>
                     }
                   />
-                  {member.membershipType === 'Owner' ? (
-                    <Chip 
-                      label="Owner" 
-                      size="small" 
-                      color="primary" 
-                      variant="outlined"
-                    />
-                  ) : member.canRemove ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
                     <Button
                       size="small"
-                      color="error"
-                      onClick={() => handleRemoveMember(member.user_id)}
-                    >
-                      Remove
-                    </Button>
-                  ) : (
-                    <Chip 
-                      label="From Tasks" 
-                      size="small" 
-                      color="info" 
                       variant="outlined"
-                    />
-                  )}
+                      startIcon={<CalendarMonthIcon fontSize="inherit" />}
+                      onClick={() => handleViewSchedule(member)}
+                    >
+                      View Schedule
+                    </Button>
+                    {member.membershipType === 'Owner' ? (
+                      <Chip 
+                        label="Owner" 
+                        size="small" 
+                        color="primary" 
+                        variant="outlined"
+                      />
+                    ) : member.canRemove ? (
+                      <Button
+                        size="small"
+                        color="error"
+                        onClick={() => handleRemoveMember(member.user_id)}
+                      >
+                        Remove
+                      </Button>
+                    ) : (
+                      <Chip 
+                        label="From Tasks" 
+                        size="small" 
+                        color="info" 
+                        variant="outlined"
+                      />
+                    )}
+                  </Box>
                 </ListItem>
               ))}
             </List>

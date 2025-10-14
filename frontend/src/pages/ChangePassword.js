@@ -8,12 +8,14 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import PersonIcon from '@mui/icons-material/Person';
 import SettingsIcon from '@mui/icons-material/Settings';
 import MailIcon from '@mui/icons-material/Mail';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
 
 export default function ChangePassword() {
   const sidebarItems = [
     { key: 'dashboard', icon: <DashboardIcon />, label: 'Dashboard' },
+    { key: 'calendar', icon: <CalendarMonthIcon />, label: 'Calendar' },
     { key: 'profile', icon: <PersonIcon />, label: 'Profile' },
     { key: 'settings', icon: <SettingsIcon />, label: 'Settings' },
     { key: 'messages', icon: <MailIcon />, label: 'Messages', badge: 12 },

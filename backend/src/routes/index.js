@@ -386,10 +386,184 @@ router.get('/tasks', async (req, res) => {
   res.json({ data: (data || []).map((t) => ({ ...t, status: mapLegacyStatus(t.status) })) });
 });
 
+// Return all tasks tied to a specified user (owner, assignee, or member).
+router.get('/tasks/by-user/:userId', async (req, res) => {
+  const targetUserId = parseInt(req.params.userId, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+
+  if (Number.isNaN(targetUserId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+  if (Number.isNaN(actingUserId)) {
+    return res.status(400).json({ error: 'acting_user_id is required' });
+  }
+
+  const { data: actingUser, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', actingUserId)
+    .single();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!actingUser) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  if (actingUserId !== targetUserId) {
+    const { data: targetUser, error: targetErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', targetUserId)
+      .single();
+
+    if (targetErr) return res.status(500).json({ error: targetErr.message });
+    if (!targetUser) return res.status(404).json({ error: 'Target user not found' });
+
+    if (actingUser.access_level <= targetUser.access_level) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permissions to view this user\'s tasks' });
+    }
+  }
+
+  try {
+    const [
+      { data: ownerTasks, error: ownerErr },
+      { data: assigneeTasks, error: assigneeErr },
+      { data: memberTasks, error: memberErr },
+    ] = await Promise.all([
+      supabase
+        .from('tasks')
+        .select('*')
+        .eq('is_deleted', false)
+        .eq('owner_id', targetUserId),
+      supabase
+        .from('tasks')
+        .select('*')
+        .eq('is_deleted', false)
+        .eq('assignee_id', targetUserId),
+      supabase
+        .from('tasks')
+        .select('*')
+        .eq('is_deleted', false)
+        .contains('members_id', [targetUserId]),
+    ]);
+
+    if (ownerErr || assigneeErr || memberErr) {
+      const err = ownerErr || assigneeErr || memberErr;
+      return res.status(500).json({ error: err.message });
+    }
+
+    const merged = new Map();
+    [...(ownerTasks || []), ...(assigneeTasks || []), ...(memberTasks || [])].forEach((task) => {
+      merged.set(task.task_id, task);
+    });
+
+    return res.json({
+      data: Array.from(merged.values()).map((task) => ({
+        ...task,
+        status: mapLegacyStatus(task.status),
+      })),
+    });
+  } catch (error) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Return all tasks with due dates for a specific user, including their role(s) on each task
+router.get('/tasks/by-user/:userId/deadlines', async (req, res) => {
+  const targetUserId = parseInt(req.params.userId, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+
+  if (Number.isNaN(targetUserId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+  if (Number.isNaN(actingUserId)) {
+    return res.status(400).json({ error: 'acting_user_id is required' });
+  }
+
+  const { data: actingUser, error: actingErr } = await supabase
+    .from('users')
+    .select('user_id, access_level')
+    .eq('user_id', actingUserId)
+    .single();
+  if (actingErr) return res.status(500).json({ error: actingErr.message });
+  if (!actingUser) return res.status(400).json({ error: 'Invalid acting_user_id' });
+
+  let projectMembershipAllows = false;
+  const projectIdParam = req.query.project_id ? parseInt(req.query.project_id, 10) : NaN;
+
+  if (!Number.isNaN(projectIdParam)) {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('project_id, owner_id, members')
+      .eq('project_id', projectIdParam)
+      .single();
+
+    if (project) {
+      const memberSet = new Set();
+      if (project.owner_id) memberSet.add(project.owner_id);
+      if (Array.isArray(project.members)) {
+        project.members.forEach((id) => {
+          if (typeof id === 'number') memberSet.add(id);
+        });
+      }
+
+      if (memberSet.has(actingUserId) && memberSet.has(targetUserId)) {
+        projectMembershipAllows = true;
+      }
+    }
+  }
+
+  if (actingUserId !== targetUserId && !projectMembershipAllows) {
+    const { data: targetUser, error: targetErr } = await supabase
+      .from('users')
+      .select('user_id, access_level')
+      .eq('user_id', targetUserId)
+      .single();
+
+    if (targetErr) return res.status(500).json({ error: targetErr.message });
+    if (!targetUser) return res.status(404).json({ error: 'Target user not found' });
+
+    if (actingUser.access_level <= targetUser.access_level) {
+      return res.status(403).json({ error: 'Forbidden: insufficient permissions to view this user\'s deadlines' });
+    }
+  }
+
+  try {
+    const { data: tasks, error: tasksErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .or(`owner_id.eq.${targetUserId},assignee_id.eq.${targetUserId},members_id.cs.{${targetUserId}}`)
+      .eq('is_deleted', false)
+      .not('due_date', 'is', null)
+      .order('due_date', { ascending: true });
+
+    if (tasksErr) {
+      return res.status(500).json({ error: tasksErr.message });
+    }
+
+    const data = (tasks || []).map((task) => {
+      const roles = [];
+      if (task.owner_id === targetUserId) roles.push('owner');
+      if (task.assignee_id === targetUserId) roles.push('assignee');
+      if (Array.isArray(task.members_id) && task.members_id.includes(targetUserId)) roles.push('member');
+
+      return {
+        task_id: task.task_id,
+        title: task.title,
+        due_date: task.due_date,
+        priority_bucket: task.priority_bucket,
+        roles,
+        status: mapLegacyStatus(task.status),
+      };
+    });
+
+    return res.json({ data });
+  } catch (error) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Create a new task (POST /tasks)
 router.post('/tasks', async (req, res) => {
-  const { 
-    title, 
+  const {
+    title,
     description, 
     status = 'UNASSIGNED', 
     priority_bucket, 

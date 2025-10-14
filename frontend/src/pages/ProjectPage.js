@@ -28,6 +28,7 @@ import DashboardIcon from "@mui/icons-material/Dashboard";
 import SettingsIcon from "@mui/icons-material/Settings";
 import MailIcon from "@mui/icons-material/Mail";
 import DeleteIcon from "@mui/icons-material/Delete";
+import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 
@@ -249,6 +250,7 @@ const ProjectsPage = () => {
   const sidebarItems = [
     { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
     { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "calendar", icon: <CalendarMonthIcon />, label: "Calendar" },
     { key: "projects", icon: <FolderIcon />, label: "Projects" },
     { key: "profile", icon: <PersonIcon />, label: "Profile" },
     { key: "settings", icon: <SettingsIcon />, label: "Settings" },

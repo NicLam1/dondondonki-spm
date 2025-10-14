@@ -41,6 +41,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 // import MenuIcon from '@mui/icons-material/Menu';
 import FolderIcon from '@mui/icons-material/Folder';
 import TaskIcon from '@mui/icons-material/Task';
+import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -675,7 +676,8 @@ export default function TasksPage() {
 
   const sidebarItems = [
     { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
-     { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "calendar", icon: <CalendarMonthIcon />, label: "Calendar" },
     { key: "projects", icon: <FolderIcon />, label: "Projects" },
     { key: "profile", icon: <PersonIcon />, label: "Profile" },
     { key: "settings", icon: <SettingsIcon />, label: "Settings" },
@@ -728,6 +730,8 @@ export default function TasksPage() {
         onItemClick={(key) => {  // ADD THIS ENTIRE onItemClick function
           if (key === "trash") {
             window.location.href = "/trash";
+          } else if (key === "calendar") {
+            window.location.href = "/calendar";
           }
         }}
       />
