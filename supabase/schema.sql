@@ -45,6 +45,19 @@ create table if not exists public.tasks (
   is_deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+
+-- Add recurrence fields to tasks table
+ALTER TABLE tasks ADD COLUMN is_recurring BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE tasks ADD COLUMN recurrence_type VARCHAR(20) CHECK (recurrence_type IN ('daily', 'weekly', 'monthly', 'custom'));
+ALTER TABLE tasks ADD COLUMN recurrence_interval INTEGER; -- For custom intervals (e.g., every 5 days)
+ALTER TABLE tasks ADD COLUMN parent_recurring_task_id INTEGER REFERENCES tasks(task_id); -- Links instances to original template
+ALTER TABLE tasks ADD COLUMN next_due_date DATE; -- When the next instance should be created
+ALTER TABLE tasks ADD COLUMN recurrence_end_date DATE; -- Optional end date for recurrence
+
+-- Add indexes for performance
+CREATE INDEX idx_tasks_is_recurring ON tasks(is_recurring) WHERE is_recurring = TRUE;
+CREATE INDEX idx_tasks_next_due_date ON tasks(next_due_date) WHERE next_due_date IS NOT NULL;
+CREATE INDEX idx_tasks_parent_recurring ON tasks(parent_recurring_task_id) WHERE parent_recurring_task_id IS NOT NULL;
 );
 
 -- Safely add columns to tasks table if they don't exist

@@ -62,6 +62,240 @@ function mapLegacyStatus(status) {
 }
 
 
+// Calculate next due date based on recurrence type and interval
+function calculateNextDueDate(currentDueDate, recurrenceType, recurrenceInterval = 1) {
+  console.log('📅 Calculating next due date:', { currentDueDate, recurrenceType, recurrenceInterval });
+  
+  const current = new Date(currentDueDate);
+  
+  // Validate input date
+  if (isNaN(current.getTime())) {
+    console.error('❌ Invalid current due date:', currentDueDate);
+    return null;
+  }
+  
+  const next = new Date(current);
+  
+  switch (recurrenceType) {
+    case 'daily':
+      next.setDate(current.getDate() + (recurrenceInterval || 1));
+      console.log('✅ Daily recurrence calculated:', next.toISOString().split('T')[0]);
+      break;
+      
+    case 'weekly':
+      next.setDate(current.getDate() + (7 * (recurrenceInterval || 1)));
+      console.log('✅ Weekly recurrence calculated:', next.toISOString().split('T')[0]);
+      break;
+      
+    case 'monthly':
+      // Fix for monthly: handle month boundaries properly
+      const targetMonth = current.getMonth() + (recurrenceInterval || 1);
+      next.setMonth(targetMonth);
+      
+      // Handle case where target day doesn't exist in the new month (e.g., Jan 31 -> Feb 31)
+      if (next.getMonth() !== (targetMonth % 12)) {
+        // If we overflowed (e.g., Feb 31 became Mar 3), go to last day of target month
+        next.setDate(0); // This sets to last day of previous month, which is our target month
+      }
+      console.log('✅ Monthly recurrence calculated:', next.toISOString().split('T')[0]);
+      break;
+      
+    case 'custom':
+      // Fix for custom: ensure interval is a valid number
+      const customInterval = parseInt(recurrenceInterval, 10);
+      if (isNaN(customInterval) || customInterval < 1) {
+        console.error('❌ Invalid custom interval:', recurrenceInterval);
+        return null;
+      }
+      next.setDate(current.getDate() + customInterval);
+      console.log('✅ Custom recurrence calculated:', next.toISOString().split('T')[0]);
+      break;
+      
+    default:
+      console.error('❌ Invalid recurrence type:', recurrenceType);
+      return null;
+  }
+  
+  const result = next.toISOString().split('T')[0]; // Return YYYY-MM-DD format
+  console.log('📅 Final calculated date:', result);
+  return result;
+}
+
+// Create the next instance of a recurring task
+async function createNextRecurringInstance(originalTask, actingUserId) {
+  try {
+    console.log('🔄 Creating next recurring instance for task:', originalTask.task_id);
+    console.log('📊 Task recurrence details:', {
+      recurrence_type: originalTask.recurrence_type,
+      recurrence_interval: originalTask.recurrence_interval,
+      current_due_date: originalTask.due_date,
+      recurrence_end_date: originalTask.recurrence_end_date,
+      original_assignee: originalTask.assignee_id,
+      original_status: originalTask.status
+    });
+    
+    // Calculate next due date
+    const nextDueDate = calculateNextDueDate(
+      originalTask.due_date, 
+      originalTask.recurrence_type, 
+      originalTask.recurrence_interval
+    );
+    
+    if (!nextDueDate) {
+      console.error('❌ Could not calculate next due date');
+      return null;
+    }
+    
+    console.log('📅 Next due date calculated:', nextDueDate);
+    
+    // Check if we've passed the end date (if set)
+    if (originalTask.recurrence_end_date && nextDueDate > originalTask.recurrence_end_date) {
+      console.log('📅 Recurrence end date reached, stopping recurrence');
+      return null;
+    }
+    
+    // Validate required fields
+    if (!originalTask.title || !originalTask.owner_id) {
+      console.error('❌ Missing required fields for task creation');
+      return null;
+    }
+    
+    // ✅ FIX: Determine the correct status based on assignee
+    let newStatus = 'UNASSIGNED';
+    if (originalTask.assignee_id) {
+      // If there was an assignee, set to ONGOING (or whatever the original non-completed status was)
+      newStatus = 'ONGOING';
+    }
+    
+    console.log('👤 Assignment details:', {
+      original_assignee: originalTask.assignee_id,
+      new_status: newStatus
+    });
+    
+    // Create the new task instance
+    const newTaskData = {
+      title: originalTask.title,
+      description: originalTask.description || '',
+      status: newStatus, // ✅ Use calculated status instead of hardcoded 'UNASSIGNED'
+      priority_bucket: originalTask.priority_bucket || 5,
+      due_date: nextDueDate,
+      project: originalTask.project || '',
+      project_id: originalTask.project_id || null,
+      owner_id: originalTask.owner_id,
+      assignee_id: originalTask.assignee_id || null, // ✅ Preserve original assignee
+      members_id: originalTask.members_id || [],
+      parent_task_id: originalTask.parent_task_id || null,
+      is_recurring: true,
+      recurrence_type: originalTask.recurrence_type,
+      recurrence_interval: originalTask.recurrence_interval,
+      parent_recurring_task_id: originalTask.parent_recurring_task_id || originalTask.task_id,
+      recurrence_end_date: originalTask.recurrence_end_date || null,
+      next_due_date: calculateNextDueDate(nextDueDate, originalTask.recurrence_type, originalTask.recurrence_interval),
+      is_deleted: false
+    };
+    
+    console.log('📝 Creating new task with data:', {
+      task_id: 'NEW',
+      title: newTaskData.title,
+      status: newTaskData.status,
+      assignee_id: newTaskData.assignee_id,
+      due_date: newTaskData.due_date
+    });
+    
+    const { data: newTask, error: createErr } = await supabase
+      .from('tasks')
+      .insert(newTaskData)
+      .select()
+      .single();
+    
+    if (createErr) {
+      console.error('❌ Error creating recurring task instance:', createErr);
+      return null;
+    }
+    
+    console.log('✅ Created recurring task instance:', {
+      task_id: newTask.task_id,
+      status: newTask.status,
+      assignee_id: newTask.assignee_id
+    });
+    
+    // Get subtasks of the completed task
+    const { data: subtasks, error: subtasksErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('parent_task_id', originalTask.task_id)
+      .eq('is_deleted', false);
+    
+    if (subtasksErr) {
+      console.error('❌ Error fetching subtasks:', subtasksErr);
+    } else if (subtasks && subtasks.length > 0) {
+      console.log(`🔄 Creating ${subtasks.length} subtasks for recurring instance`);
+      
+      // Create subtasks for the new instance
+      for (const subtask of subtasks) {
+        // ✅ FIX: Preserve subtask assignments too
+        let subtaskStatus = 'UNASSIGNED';
+        if (subtask.assignee_id) {
+          subtaskStatus = 'ONGOING';
+        }
+        
+        const newSubtaskData = {
+          title: subtask.title,
+          description: subtask.description || '',
+          status: subtaskStatus, // ✅ Use calculated status
+          priority_bucket: newTask.priority_bucket,
+          due_date: nextDueDate,
+          project: newTask.project,
+          project_id: newTask.project_id,
+          owner_id: subtask.owner_id,
+          assignee_id: subtask.assignee_id || null, // ✅ Preserve subtask assignee
+          members_id: subtask.members_id || [],
+          parent_task_id: newTask.task_id,
+          is_recurring: false,
+          is_deleted: false
+        };
+        
+        const { error: subtaskCreateErr } = await supabase
+          .from('tasks')
+          .insert(newSubtaskData);
+        
+        if (subtaskCreateErr) {
+          console.error('❌ Error creating recurring subtask:', subtaskCreateErr);
+        } else {
+          console.log('✅ Created recurring subtask:', {
+            title: subtask.title,
+            assignee_id: subtask.assignee_id,
+            status: subtaskStatus
+          });
+        }
+      }
+    }
+    
+    // Log activity for the new recurring instance
+    try {
+      await recordTaskActivity(supabase, {
+        taskId: newTask.task_id,
+        authorId: actingUserId,
+        type: ActivityTypes.TASK_CREATED,
+        metadata: { 
+          recurring_instance: true,
+          original_task_id: originalTask.parent_recurring_task_id || originalTask.task_id,
+          preserved_assignee: originalTask.assignee_id
+        },
+        summary: `Recurring task instance created automatically${originalTask.assignee_id ? ' with preserved assignment' : ''}`
+      });
+    } catch (activityErr) {
+      console.warn('Warning: Could not log activity for recurring task:', activityErr);
+    }
+    
+    return newTask; 
+    
+  } catch (error) {
+    console.error('❌ Error in createNextRecurringInstance:', error);
+    return null;
+  }
+}
+
 
 router.get('/users', async (req, res) => {
   const { data, error } = await supabase
@@ -616,7 +850,12 @@ router.post('/tasks', async (req, res) => {
     assignee_id = null,
     members_id = [], 
     parent_task_id = null,
-    acting_user_id 
+    acting_user_id, 
+    // NEW: Recurrence fields
+    is_recurring = false,
+    recurrence_type = null,
+    recurrence_interval = null,
+    recurrence_end_date = null
   } = req.body || {};
 
   if (!title || !owner_id || !acting_user_id) {
@@ -630,6 +869,24 @@ router.post('/tasks', async (req, res) => {
   if (!(Number.isInteger(priority_bucket) && priority_bucket >= 1 && priority_bucket <= 10)) {
     return res.status(400).json({ error: 'priority_bucket must be an integer between 1 and 10' });
   }
+
+  // Validate recurrence fields
+  if (is_recurring) {
+    const validRecurrenceTypes = ['daily', 'weekly', 'monthly', 'custom'];
+    if (!recurrence_type || !validRecurrenceTypes.includes(recurrence_type)) {
+      return res.status(400).json({ error: 'Valid recurrence_type is required for recurring tasks' });
+    }
+    
+    if (recurrence_type === 'custom' && (!recurrence_interval || recurrence_interval < 1)) {
+      return res.status(400).json({ error: 'recurrence_interval must be >= 1 for custom recurrence' });
+    }
+    
+    if (recurrence_end_date && recurrence_end_date <= due_date) {
+      return res.status(400).json({ error: 'recurrence_end_date must be after due_date' });
+    }
+  }
+
+
 
   // Load acting user (to allow creating tasks for self or for users they outrank)
   const { data: acting, error: actingErr } = await supabase
@@ -676,6 +933,12 @@ router.post('/tasks', async (req, res) => {
   // Compute effective status based on assignee
   const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status === 'UNASSIGNED' ? 'ONGOING' : status);
 
+  // Calculate next_due_date for recurring tasks
+  let nextDueDate = null;
+  if (is_recurring) {
+    nextDueDate = calculateNextDueDate(due_date, recurrence_type, recurrence_interval);
+  }
+
   const insertPayload = {
     title,
     description,
@@ -688,6 +951,12 @@ router.post('/tasks', async (req, res) => {
     assignee_id,
     members_id,
     parent_task_id,
+    // NEW: Recurrence fields
+    is_recurring,
+    recurrence_type: is_recurring ? recurrence_type : null,
+    recurrence_interval: is_recurring ? (recurrence_interval || 1) : null,
+    recurrence_end_date: is_recurring ? recurrence_end_date : null,
+    next_due_date: nextDueDate,
     is_deleted: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
@@ -1822,6 +2091,20 @@ router.patch('/tasks/:id/status', async (req, res) => {
   const canEdit = isOwner || isMember || outranksOwner;
   if (!canEdit) return res.status(403).json({ error: 'Forbidden' });
 
+    // Check if this is a recurring task being completed
+  if (status === 'COMPLETED' && task.is_recurring) {
+    console.log('🔄 Recurring task completed, creating next instance');
+    
+    // Create the next instance
+    const nextInstance = await createNextRecurringInstance(task, actingUserId);
+    
+    if (nextInstance) {
+      console.log('✅ Next recurring instance created:', nextInstance.task_id);
+    } else {
+      console.log('❌ Failed to create next recurring instance or recurrence ended');
+    }
+  }
+
   // --- Two-step update to avoid 406 / “single JSON object” ---
   // 1) Update (no returning rows)
   const { error: updErr } = await supabase
@@ -1995,6 +2278,7 @@ router.patch('/tasks/:id', async (req, res) => {
 
   return res.json({ data: updated });
 });
+
 
 // NEW: Add existing task to project
 router.post('/projects/:id/add-task', async (req, res) => {
@@ -2517,5 +2801,134 @@ async function updateProjectTasksArray(projectId) {
     console.error('❌ Error in updateProjectTasksArray:', error);
   }
 }
+
+// Get all recurring tasks for a user
+router.get('/tasks/recurring', async (req, res) => {
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+  
+  if (Number.isNaN(actingUserId)) {
+    return res.status(400).json({ error: 'acting_user_id is required' });
+  }
+
+  try {
+    // Get recurring tasks where user is owner or member
+    const { data: recurringTasks, error } = await supabase
+      .from('tasks')
+      .select(`
+        task_id,
+        title,
+        description,
+        due_date,
+        next_due_date,
+        recurrence_type,
+        recurrence_interval,
+        recurrence_end_date,
+        owner_id,
+        assignee_id,
+        project,
+        status,
+        parent_recurring_task_id,
+        created_at
+      `)
+      .eq('is_recurring', true)
+      .eq('is_deleted', false)
+      .or(`owner_id.eq.${actingUserId},members_id.cs.{${actingUserId}}`)
+      .order('next_due_date', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Group by original recurring task (parent_recurring_task_id)
+    const grouped = {};
+    (recurringTasks || []).forEach(task => {
+      const parentId = task.parent_recurring_task_id || task.task_id;
+      if (!grouped[parentId]) {
+        grouped[parentId] = {
+          original_task: null,
+          instances: []
+        };
+      }
+      
+      if (task.parent_recurring_task_id) {
+        grouped[parentId].instances.push(task);
+      } else {
+        grouped[parentId].original_task = task;
+      }
+    });
+
+    return res.json({ 
+      success: true, 
+      data: Object.values(grouped).filter(group => group.original_task)
+    });
+    
+  } catch (error) {
+    console.error('Error fetching recurring tasks:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Stop recurrence for a task
+router.post('/tasks/:id/stop-recurrence', async (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  const { acting_user_id } = req.body;
+  
+  if (Number.isNaN(taskId)) return res.status(400).json({ error: 'Invalid task id' });
+  if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  try {
+    // Get the task and verify permissions
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('task_id', taskId)
+      .eq('is_deleted', false)
+      .single();
+    
+    if (taskErr) return res.status(500).json({ error: taskErr.message });
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+    if (!task.is_recurring) return res.status(400).json({ error: 'Task is not recurring' });
+
+    // Only owner can stop recurrence
+    if (task.owner_id !== acting_user_id) {
+      return res.status(403).json({ error: 'Only the task owner can stop recurrence' });
+    }
+
+    // Stop recurrence
+    const { error: updateErr } = await supabase
+      .from('tasks')
+      .update({
+        is_recurring: false,
+        recurrence_type: null,
+        recurrence_interval: null,
+        next_due_date: null,
+        recurrence_end_date: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('task_id', taskId);
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    // Log activity
+    try {
+      await recordTaskActivity(supabase, {
+        taskId: taskId,
+        authorId: acting_user_id,
+        type: ActivityTypes.FIELD_EDITED,
+        metadata: { field: 'recurrence', action: 'stopped' },
+        summary: 'Recurrence stopped'
+      });
+    } catch (_) {}
+
+    return res.json({ 
+      success: true, 
+      message: 'Recurrence stopped for this task' 
+    });
+    
+  } catch (error) {
+    console.error('Error stopping recurrence:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 module.exports = router;

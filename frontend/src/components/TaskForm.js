@@ -65,8 +65,32 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }
     owner_id: actingUserId || '',
     assignee_id: null,
     members_id: [],
-    acting_user_id: actingUserId || ''
+    acting_user_id: actingUserId || '',
+    // NEW: Recurrence fields
+    is_recurring: false,
+    recurrence_type: 'daily',
+    recurrence_interval: 1,
+    recurrence_end_date: ''
   });
+
+// Add these handlers
+const handleRecurrenceToggle = (e) => {
+  const isRecurring = e.target.checked;
+  setFormData(prev => ({
+    ...prev,
+    is_recurring: isRecurring,
+    recurrence_type: isRecurring ? 'daily' : null,
+    recurrence_interval: isRecurring ? 1 : null,
+    recurrence_end_date: isRecurring ? '' : null
+  }));
+};
+
+const handleRecurrenceChange = (field, value) => {
+  setFormData(prev => ({
+    ...prev,
+    [field]: value
+  }));
+};
 
   const [subtasks, setSubtasks] = useState([]);
   const [showSubtaskForm, setShowSubtaskForm] = useState(false);
@@ -238,6 +262,21 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }
     setShowSubtaskForm(true);
   };
 
+// const addSubtask = () => {
+//   const newSubtask = {
+//     id: Date.now(),
+//     title: '',
+//     description: '',
+//     status: 'UNASSIGNED',
+//     due_date: '',
+//     owner_id: formData.owner_id,
+//     assignee_id: null,
+//     members_id: [],
+//     priority_bucket: formData.priority_bucket
+//   };
+//   setSubtasks(prev => [...prev, newSubtask]);
+// };
+
   const updateSubtask = (id, field, value) => {
     // Validate due_date for subtasks too
     if (field === 'due_date' && value && value < today) {
@@ -275,13 +314,220 @@ const removeFile = (index) => {
 };
 
 // Update the handleSubmit function to upload attachments after task creation:
+// const handleSubmit = async (e) => {
+//   e.preventDefault();
+//   setIsSubmitting(true);
+
+//   try {
+  
+//         // Validate required fields
+//     if (!formData.title.trim()) {
+//       throw new Error('Title is required');
+//     }
+//     if (!formData.due_date || formData.due_date.trim() === '') {
+//       throw new Error('Due date is required');
+//     }
+    
+//     // Validate recurrence fields
+//     if (formData.is_recurring) {
+//       if (!formData.due_date || formData.due_date.trim() === '') {
+//         throw new Error('Due date is required for recurring tasks');
+//       }
+//       if (formData.recurrence_end_date && formData.recurrence_end_date.trim() !== '' && formData.recurrence_end_date <= formData.due_date) {
+//         throw new Error('Recurrence end date must be after due date');
+//       }
+//     }
+
+//     // STEP 1: Create the task first and WAIT for completion
+//     console.log('🚀 Creating task with data:', formData);
+
+//     // Clean the form data before sending
+//     const cleanedFormData = {
+//       ...formData,
+//       // Ensure empty strings become null for optional date fields
+//       recurrence_end_date: formData.recurrence_end_date && formData.recurrence_end_date.trim() !== '' 
+//         ? formData.recurrence_end_date 
+//         : null
+//     };
+    
+//     const endpoint = parentTask 
+//       ? `/tasks/${parentTask.task_id}/subtask`
+//       : '/tasks';
+    
+//     const taskResponse = await apiJson(endpoint, {
+//       method: 'POST',
+//       body: {
+//         ...formData,
+//         parent_task_id: parentTask?.task_id || null
+//       }
+//     });
+
+//     if (!taskResponse.success) {
+//       throw new Error(taskResponse.error || 'Failed to create task');
+//     }
+
+//     const createdTask = taskResponse.data;
+//     console.log('✅ Task created successfully:', {
+//       taskId: createdTask.task_id,
+//       title: createdTask.title
+//     });
+
+//     // STEP 2: Only proceed with attachments if task creation was successful
+//     if (selectedFiles.length > 0 && !parentTask) {
+//       console.log(`📎 Starting upload of ${selectedFiles.length} files for task ${createdTask.task_id}`);
+      
+//       const uploadResults = [];
+      
+//       // Upload files sequentially to avoid overwhelming the server
+//       for (let i = 0; i < selectedFiles.length; i++) {
+//         const file = selectedFiles[i];
+//         console.log(`📤 Uploading file ${i + 1}/${selectedFiles.length}: ${file.name}`);
+        
+//         try {
+//           const uploadFormData = new FormData();
+//           uploadFormData.append('file', file);
+//           uploadFormData.append('acting_user_id', actingUserId.toString());
+
+//           // Wait for each upload to complete before starting the next
+//           const uploadResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/attachments`, {
+//             method: 'POST',
+//             credentials: 'include',
+//             body: uploadFormData
+//           });
+
+//           const uploadResult = await uploadResponse.json();
+          
+//           if (uploadResult.success) {
+//             console.log(`✅ File uploaded successfully: ${file.name}`);
+//             uploadResults.push({ file: file.name, success: true });
+//           } else {
+//             console.error(`❌ Failed to upload ${file.name}:`, uploadResult.error);
+//             uploadResults.push({ file: file.name, success: false, error: uploadResult.error });
+//             showError(`Failed to upload ${file.name}: ${uploadResult.error}`);
+//           }
+//         } catch (uploadError) {
+//           console.error(`❌ Upload error for ${file.name}:`, uploadError);
+//           uploadResults.push({ file: file.name, success: false, error: uploadError.message });
+//           showError(`Failed to upload ${file.name}: ${uploadError.message}`);
+//         }
+//       }
+      
+//       // Summary of upload results
+//       const successfulUploads = uploadResults.filter(r => r.success).length;
+//       const failedUploads = uploadResults.filter(r => !r.success).length;
+      
+//       console.log(`📊 Upload summary: ${successfulUploads} successful, ${failedUploads} failed`);
+      
+//       if (successfulUploads > 0) {
+//         showSuccess(`Task "${createdTask.title}" created with ${successfulUploads} attachment(s)!`);
+//       }
+//     }
+
+//     // STEP 3: Create subtasks if any (only for main tasks, not subtasks)
+//     if (subtasks.length > 0 && !parentTask) {
+//       console.log(`📋 Creating ${subtasks.length} subtasks...`);
+      
+//       for (const subtask of subtasks) {
+//         if (subtask.title.trim()) {
+//           try {
+//             await apiJson(`/tasks/${createdTask.task_id}/subtask`, {
+//               method: 'POST',
+//               body: {
+//                 ...subtask,
+//                 acting_user_id: formData.acting_user_id,
+//                 owner_id: formData.owner_id
+//               }
+//             });
+//             console.log(`✅ Subtask created: ${subtask.title}`);
+//           } catch (subtaskError) {
+//             console.warn(`❌ Failed to create subtask: ${subtask.title}`, subtaskError);
+//           }
+//         }
+//       }
+//     }
+
+//     // STEP 4: Success - close form and notify parent
+//     console.log('🎉 Task creation process completed successfully');
+//     onSubmit && onSubmit(createdTask);
+//     onClose();
+    
+//     // Reset form
+//     setFormData({
+//       title: '',
+//       description: '',
+//       status: 'UNASSIGNED',
+//       priority_bucket: 5,
+//       due_date: '',
+//       project: '',
+//       owner_id: actingUserId || '',
+//       assignee_id: null,
+//       members_id: [],
+//       acting_user_id: actingUserId || '',
+//       // NEW: Reset recurrence fields
+//       is_recurring: false,
+//       recurrence_type: 'daily',
+//       recurrence_interval: 1,
+//       recurrence_end_date: ''
+//     });
+//     setSubtasks([]);
+//     setSelectedFiles([]);
+//     setShowSubtaskForm(false);
+
+//     // Show final success message if no attachments were uploaded
+//     if (selectedFiles.length === 0) {
+//       showSuccess(`Task "${createdTask.title}" created successfully!`);
+//     }
+
+//   } catch (error) {
+//     console.error('❌ Error in task creation process:', error);
+//     showError(`Failed to create task: ${error.message}`);
+//   } finally {
+//     setIsSubmitting(false);
+//   }
+// };
+
 const handleSubmit = async (e) => {
   e.preventDefault();
   setIsSubmitting(true);
 
   try {
-    // STEP 1: Create the task first and WAIT for completion
+    // Validate required fields
+    if (!formData.title.trim()) {
+      throw new Error('Title is required');
+    }
+    if (!formData.due_date || formData.due_date.trim() === '') {
+      throw new Error('Due date is required');
+    }
+
+    // ✅ VALIDATE SUBTASKS
+    for (const subtask of subtasks) {
+      if (subtask.title.trim() && !subtask.due_date) {
+        throw new Error(`Due date is required for subtask: "${subtask.title}"`);
+      }
+      if (!subtask.title.trim()) {
+        throw new Error('All subtasks must have a title');
+      }
+    }
+    
+    // Validate recurrence fields
+    if (formData.is_recurring) {
+      if (!formData.due_date || formData.due_date.trim() === '') {
+        throw new Error('Due date is required for recurring tasks');
+      }
+      if (formData.recurrence_end_date && formData.recurrence_end_date.trim() !== '' && formData.recurrence_end_date <= formData.due_date) {
+        throw new Error('Recurrence end date must be after due date');
+      }
+    }
+
     console.log('🚀 Creating task with data:', formData);
+
+    // Clean the form data before sending
+    const cleanedFormData = {
+      ...formData,
+      recurrence_end_date: formData.recurrence_end_date && formData.recurrence_end_date.trim() !== '' 
+        ? formData.recurrence_end_date 
+        : null
+    };
     
     const endpoint = parentTask 
       ? `/tasks/${parentTask.task_id}/subtask`
@@ -290,7 +536,7 @@ const handleSubmit = async (e) => {
     const taskResponse = await apiJson(endpoint, {
       method: 'POST',
       body: {
-        ...formData,
+        ...cleanedFormData,
         parent_task_id: parentTask?.task_id || null
       }
     });
@@ -305,13 +551,12 @@ const handleSubmit = async (e) => {
       title: createdTask.title
     });
 
-    // STEP 2: Only proceed with attachments if task creation was successful
+    // STEP 2: Upload attachments (only for main tasks)
     if (selectedFiles.length > 0 && !parentTask) {
       console.log(`📎 Starting upload of ${selectedFiles.length} files for task ${createdTask.task_id}`);
       
       const uploadResults = [];
       
-      // Upload files sequentially to avoid overwhelming the server
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i];
         console.log(`📤 Uploading file ${i + 1}/${selectedFiles.length}: ${file.name}`);
@@ -321,7 +566,6 @@ const handleSubmit = async (e) => {
           uploadFormData.append('file', file);
           uploadFormData.append('acting_user_id', actingUserId.toString());
 
-          // Wait for each upload to complete before starting the next
           const uploadResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/attachments`, {
             method: 'POST',
             credentials: 'include',
@@ -345,41 +589,49 @@ const handleSubmit = async (e) => {
         }
       }
       
-      // Summary of upload results
       const successfulUploads = uploadResults.filter(r => r.success).length;
-      const failedUploads = uploadResults.filter(r => !r.success).length;
-      
-      console.log(`📊 Upload summary: ${successfulUploads} successful, ${failedUploads} failed`);
       
       if (successfulUploads > 0) {
         showSuccess(`Task "${createdTask.title}" created with ${successfulUploads} attachment(s)!`);
       }
     }
 
-    // STEP 3: Create subtasks if any (only for main tasks, not subtasks)
+    // STEP 3: Create subtasks (only for main tasks)
     if (subtasks.length > 0 && !parentTask) {
       console.log(`📋 Creating ${subtasks.length} subtasks...`);
       
       for (const subtask of subtasks) {
         if (subtask.title.trim()) {
           try {
-            await apiJson(`/tasks/${createdTask.task_id}/subtask`, {
-              method: 'POST',
-              body: {
-                ...subtask,
-                acting_user_id: formData.acting_user_id,
-                owner_id: formData.owner_id
-              }
-            });
-            console.log(`✅ Subtask created: ${subtask.title}`);
+            // If subtask already has a task_id, it was created via the subtask dialog
+            if (subtask.task_id && subtask.task_id !== 'temp') {
+              // Update the parent_task_id for the existing subtask
+              await apiJson(`/tasks/${subtask.task_id}`, {
+                method: 'PATCH',
+                params: { acting_user_id: String(actingUserId) },
+                body: { parent_task_id: createdTask.task_id }
+              });
+              console.log(`✅ Updated subtask parent: ${subtask.title}`);
+            } else {
+              // Create new subtask using the old method (shouldn't happen with new approach)
+              await apiJson(`/tasks/${createdTask.task_id}/subtask`, {
+                method: 'POST',
+                body: {
+                  ...subtask,
+                  acting_user_id: formData.acting_user_id,
+                  owner_id: formData.owner_id
+                }
+              });
+              console.log(`✅ Subtask created: ${subtask.title}`);
+            }
           } catch (subtaskError) {
-            console.warn(`❌ Failed to create subtask: ${subtask.title}`, subtaskError);
+            console.warn(`❌ Failed to handle subtask: ${subtask.title}`, subtaskError);
           }
         }
       }
     }
 
-    // STEP 4: Success - close form and notify parent
+    // SUCCESS: Close form and notify parent
     console.log('🎉 Task creation process completed successfully');
     onSubmit && onSubmit(createdTask);
     onClose();
@@ -395,11 +647,14 @@ const handleSubmit = async (e) => {
       owner_id: actingUserId || '',
       assignee_id: null,
       members_id: [],
-      acting_user_id: actingUserId || ''
+      acting_user_id: actingUserId || '',
+      is_recurring: false,
+      recurrence_type: 'daily',
+      recurrence_interval: 1,
+      recurrence_end_date: ''
     });
     setSubtasks([]);
     setSelectedFiles([]);
-    setShowSubtaskForm(false);
 
     // Show final success message if no attachments were uploaded
     if (selectedFiles.length === 0) {
@@ -413,145 +668,6 @@ const handleSubmit = async (e) => {
     setIsSubmitting(false);
   }
 };
-
-  // const handleSubmit = async (e) => {
-  //   if (e && typeof e.preventDefault === 'function') {
-  //     e.preventDefault();
-  //   }
-  //   setIsSubmitting(true);
-
-  //   try {
-  //     // Client-side validations
-  //     if (!formData.title || !formData.title.trim()) {
-  //       showError('Title is required.');
-  //       setIsSubmitting(false);
-  //       return;
-  //     }
-  //     if (!formData.owner_id) {
-  //       showError('Owner is required.');
-  //       setIsSubmitting(false);
-  //       return;
-  //     }
-  //     if (!parentTask) {
-  //       if (!(Number.isInteger(formData.priority_bucket) || /^\d+$/.test(String(formData.priority_bucket)))) {
-  //         showError('Priority bucket must be 1–10.');
-  //         setIsSubmitting(false);
-  //         return;
-  //       }
-  //       const pb = parseInt(String(formData.priority_bucket), 10);
-  //       if (pb < 1 || pb > 10) {
-  //         showError('Priority bucket must be 1–10.');
-  //         setIsSubmitting(false);
-  //         return;
-  //       }
-  //     }
-  //     if (!formData.due_date || String(formData.due_date).trim() === '') {
-  //       showError('Due date is required.');
-  //       setIsSubmitting(false);
-  //       return;
-  //     }
-  //     if (formData.status !== 'UNASSIGNED' && (formData.assignee_id == null || formData.assignee_id === '')) {
-  //       showError('Please select an assignee or set status to Unassigned.');
-  //       setIsSubmitting(false);
-  //       return;
-  //     }
-  //     // Create main task or subtask
-  //     const endpoint = parentTask 
-  //       ? `/tasks/${parentTask.task_id}/subtask`
-  //       : '/tasks';
-      
-  //     // Build request payload explicitly to avoid JSON.stringify on functions
-  //     let payload;
-  //     if (parentTask) {
-  //       const { title, description, status, due_date, owner_id, assignee_id, members_id, acting_user_id } = formData;
-  //       payload = {
-  //         title,
-  //         description,
-  //         status,
-  //         due_date,
-  //         owner_id,
-  //         assignee_id,
-  //         members_id,
-  //         acting_user_id,
-  //         parent_task_id: parentTask.task_id
-  //       };
-  //     } else {
-  //       const { priority_bucket } = formData;
-  //       payload = { ...formData, priority_bucket: parseInt(String(priority_bucket), 10), parent_task_id: null };
-  //     }
-
-  //     const taskResponse = await fetch(`${API_BASE}${endpoint}`, {
-  //       method: 'POST',
-  //       headers: {
-  //         'Content-Type': 'application/json',
-  //       },
-  //       credentials: 'include',
-  //       body: JSON.stringify(payload),
-  //     });
-
-  //     if (!taskResponse.ok) {
-  //       const errorData = await taskResponse.json();
-  //       throw new Error(errorData.error || 'Failed to create task');
-  //     }
-
-  //     const taskResult = await taskResponse.json();
-  //     const createdTask = taskResult.data;
-
-  //     // Create subtasks if any (only for main tasks, not subtasks)
-  //     if (subtasks.length > 0 && !parentTask) {
-  //       for (const subtask of subtasks) {
-  //         if (subtask.title.trim()) {
-  //           const subtaskResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/subtask`, {
-  //             method: 'POST',
-  //             headers: {
-  //               'Content-Type': 'application/json',
-  //             },
-  //             credentials: 'include',
-  //             body: JSON.stringify({
-  //               // inherit parent's project and priority; omit those fields intentionally
-  //               title: subtask.title,
-  //               description: subtask.description,
-  //               status: subtask.status,
-  //               due_date: subtask.due_date,
-  //               owner_id: subtask.owner_id,
-  //               assignee_id: null,
-  //               members_id: [],
-  //               acting_user_id: formData.acting_user_id
-  //             }),
-  //           });
-            
-  //           if (!subtaskResponse.ok) {
-  //             console.warn('Failed to create subtask:', subtask.title);
-  //           }
-  //         }
-  //       }
-  //     }
-
-  //     onSubmit && onSubmit(createdTask);
-  //     onClose();
-      
-  //     // Reset form
-  //     setFormData({
-  //       title: '',
-  //       description: '',
-  //       status: 'UNASSIGNED',
-  //       priority_bucket: 5,
-  //       due_date: '',
-  //       project: '',
-  //       owner_id: actingUserId || '',
-  //       assignee_id: null,
-  //       members_id: [],
-  //       acting_user_id: actingUserId || ''
-  //     });
-  //     setSubtasks([]);
-  //     setShowSubtaskForm(false);
-  //   } catch (error) {
-  //     console.error('Error creating task:', error);
-  //     showError(`Failed to create task: ${error.message}`);
-  //   } finally {
-  //     setIsSubmitting(false);
-  //   }
-  // };
 
   const selectedOwner = users.find(user => user.user_id === formData.owner_id);
   const selectedMembers = formData.members_id.map(id => users.find(user => user.user_id === id)).filter(Boolean);
@@ -706,6 +822,87 @@ const handleSubmit = async (e) => {
               </div>
             </Box>
           )}
+
+      {/* Recurrence Section */}
+{!parentTask && (
+  <Box>
+    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+      Recurrence
+    </Typography>
+    
+    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+      <input
+        type="checkbox"
+        id="recurring-checkbox"
+        checked={formData.is_recurring}
+        onChange={handleRecurrenceToggle}
+        style={{ marginRight: '8px' }}
+      />
+      <label htmlFor="recurring-checkbox">
+        Make this a recurring task
+      </label>
+    </Box>
+    
+    {formData.is_recurring && (
+      <Box sx={{ p: 1.5, border: '1px solid #e0e0e0', borderRadius: 1, backgroundColor: '#f9f9f9' }}>
+        <Stack spacing={2}>
+          <FormControl size="small" fullWidth>
+            <InputLabel>Repeat</InputLabel>
+            <Select
+              value={formData.recurrence_type}
+              label="Repeat"
+              onChange={(e) => handleRecurrenceChange('recurrence_type', e.target.value)}
+            >
+              <MenuItem value="daily">Daily</MenuItem>
+              <MenuItem value="weekly">Weekly</MenuItem>
+              <MenuItem value="monthly">Monthly</MenuItem>
+              <MenuItem value="custom">Custom</MenuItem>
+            </Select>
+          </FormControl>
+          
+          {formData.recurrence_type === 'custom' && (
+            <TextField
+              label="Every X days"
+              type="number"
+              size="small"
+              value={formData.recurrence_interval}
+              onChange={(e) => handleRecurrenceChange('recurrence_interval', parseInt(e.target.value, 10) || 1)}
+              inputProps={{ min: 1, max: 365 }}
+              helperText="How many days between repetitions"
+            />
+          )}
+          
+          {(formData.recurrence_type === 'weekly' || formData.recurrence_type === 'monthly') && (
+            <TextField
+              label={`Every X ${formData.recurrence_type === 'weekly' ? 'weeks' : 'months'}`}
+              type="number"
+              size="small"
+              value={formData.recurrence_interval}
+              onChange={(e) => handleRecurrenceChange('recurrence_interval', parseInt(e.target.value, 10) || 1)}
+              inputProps={{ min: 1, max: formData.recurrence_type === 'weekly' ? 52 : 12 }}
+              helperText={`How many ${formData.recurrence_type === 'weekly' ? 'weeks' : 'months'} between repetitions`}
+            />
+          )}
+          
+          <TextField
+            type="date"
+            label="End Date (Optional)"
+            value={formData.recurrence_end_date}
+            onChange={(e) => handleRecurrenceChange('recurrence_end_date', e.target.value)}
+            InputLabelProps={{ shrink: true }}
+            inputProps={{ min: formData.due_date }}
+            size="small"
+            helperText="Leave blank for no end date"
+          />
+          
+          <Typography variant="caption" color="text.secondary">
+            📋 All subtasks will be recreated with each recurring instance
+          </Typography>
+        </Stack>
+      </Box>
+    )}
+  </Box>
+)}
 
           {/* Assignee (optional) */}
           <Box>
@@ -870,7 +1067,7 @@ const handleSubmit = async (e) => {
   </Box>
 )}
 
-          {!parentTask && (
+          {/* {!parentTask && (
             <Box>
               <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Subtasks</Typography>
@@ -941,7 +1138,101 @@ const handleSubmit = async (e) => {
                 </Box>
               ))}
             </Box>
-          )}
+          )} */}
+
+{/* SIMPLE: Inline Subtask Form */}
+{!parentTask && (
+  <Box>
+    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Subtasks</Typography>
+      <Button
+        type="button"
+        size="small"
+        variant="outlined"
+        startIcon={<AddIcon />}
+        onClick={addSubtask}
+        sx={{
+          textTransform: 'none',
+          borderColor: '#6A11CB',
+          color: '#6A11CB',
+          '&:hover': {
+            borderColor: '#4E54C8',
+            backgroundColor: 'rgba(106,17,203,0.04)'
+          }
+        }}
+      >
+        Add Subtask
+      </Button>
+    </Stack>
+
+    {subtasks.map((subtask) => (
+      <Box key={subtask.id} sx={{ p: 1.5, border: '1px solid #e0e0e0', borderRadius: 1, mb: 1.5 }}>
+        <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+          <Typography variant="subtitle2">Subtask {subtasks.indexOf(subtask) + 1}</Typography>
+          <Button
+            type="button"
+            size="small"
+            color="error"
+            onClick={() => removeSubtask(subtask.id)}
+          >
+            Remove
+          </Button>
+        </Stack>
+
+        <Stack spacing={1.5}>
+          <TextField
+            placeholder="Subtask title"
+            value={subtask.title}
+            onChange={(e) => updateSubtask(subtask.id, 'title', e.target.value)}
+            size="small"
+            fullWidth
+            required
+          />
+          <TextField
+            placeholder="Subtask description"
+            value={subtask.description}
+            onChange={(e) => updateSubtask(subtask.id, 'description', e.target.value)}
+            size="small"
+            fullWidth
+            multiline
+            minRows={2}
+          />
+
+          <Stack direction="row" spacing={2}>
+            <TextField
+              type="date"
+              label="Due Date"
+              value={subtask.due_date}
+              onChange={(e) => updateSubtask(subtask.id, 'due_date', e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              size="small"
+              required
+              sx={{ minWidth: 180 }}
+            />
+            
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Assignee</InputLabel>
+              <Select
+                value={subtask.assignee_id || ''}
+                label="Assignee"
+                onChange={(e) => updateSubtask(subtask.id, 'assignee_id', e.target.value || null)}
+              >
+                <MenuItem value="">
+                  <em>None</em>
+                </MenuItem>
+                {users.map((user) => (
+                  <MenuItem key={user.user_id} value={user.user_id}>
+                    {user.full_name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Stack>
+        </Stack>
+      </Box>
+    ))}
+  </Box>
+)}
         </Stack>
       </DialogContent>
       <DialogActions sx={{ justifyContent: 'space-between', px: 3 }}>

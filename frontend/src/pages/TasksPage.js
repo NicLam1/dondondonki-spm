@@ -129,12 +129,62 @@ const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
   const queryClient = useQueryClient();
 
    const mutation = useMutation({
-    mutationFn: (newStatus) =>
-      apiJson(`/tasks/${task.task_id}/status`, {
-        method: "PATCH",
-        params: { acting_user_id: String(actingUserId) },
-        body: { status: newStatus },
-      }),
+    // mutationFn: async (newStatus) =>
+    //   apiJson(`/tasks/${task.task_id}/status`, {
+    //     method: "PATCH",
+    //     params: { acting_user_id: String(actingUserId) },
+    //     body: { status: newStatus },
+    //   }),
+      mutationFn: async (newStatus) => {
+    console.log('🔄 Updating task status:', { taskId: task.task_id, newStatus, actingUserId });
+    
+    // Check if this is a recurring task being completed
+    if (newStatus === 'COMPLETED' && task.is_recurring) {
+      console.log('🔄 Recurring task being completed');
+    }
+    
+    const response = await fetch(`${API_BASE}/tasks/${task.task_id}/status?acting_user_id=${actingUserId}`, {
+      method: 'PATCH', // Make sure this is PATCH, not GET
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({ status: newStatus }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  },
+  //   onMutate: async (newStatus) => {
+  //     // Guard: cannot change from UNASSIGNED without an assignee
+  //     if ((task.assignee_id == null) && newStatus !== 'UNASSIGNED') {
+  //        throw new Error('Assign someone before changing status');
+  //     }
+  //     // Guard: cannot set UNASSIGNED when an assignee exists
+  //     if ((task.assignee_id != null) && newStatus === 'UNASSIGNED') {
+  //       throw new Error('Remove assignee before changing status to Unassigned');
+  //     }
+  //     onLocalUpdate?.({ ...task, status: newStatus });
+  //     await queryClient.cancelQueries({ queryKey: ["tasks"] });
+  //     return {};
+  //   },
+  //    onError: (e) => {
+  //      const message = e?.message || 'Unable to update status';
+  //      onError?.(message);
+  //    },
+  //   onSuccess: () => {
+  //     queryClient.invalidateQueries({ queryKey: ["tasks"] });
+  //     queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
+  //     queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
+  //     if (task?.task_id) {
+  //       queryClient.invalidateQueries({ queryKey: ["task-activity", task.task_id] });
+  //     }
+  //   },
+  // });
     onMutate: async (newStatus) => {
       // Guard: cannot change from UNASSIGNED without an assignee
       if ((task.assignee_id == null) && newStatus !== 'UNASSIGNED') {
@@ -148,11 +198,14 @@ const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
       await queryClient.cancelQueries({ queryKey: ["tasks"] });
       return {};
     },
-     onError: (e) => {
+    
+    onError: (e) => {
        const message = e?.message || 'Unable to update status';
        onError?.(message);
      },
-    onSuccess: () => {
+     
+    onSuccess: (data) => {
+      console.log('✅ Status update successful:', data);
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       queryClient.invalidateQueries({ queryKey: ["task-descendants"] });
       queryClient.invalidateQueries({ queryKey: ["task-ancestors"] });
@@ -160,7 +213,7 @@ const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
         queryClient.invalidateQueries({ queryKey: ["task-activity", task.task_id] });
       }
     },
-  });
+});
 
   const handleChange = (e) => {
     const val = e.target.value;
