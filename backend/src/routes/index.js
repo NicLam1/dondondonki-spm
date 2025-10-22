@@ -1936,7 +1936,7 @@ router.put('/tasks/:id/priority', async (req, res) => {
     message: `Task "${task.title}" priority updated to P${priority_bucket}`,
     data: updatedTask
   });
-};
+});
 
 
 
