@@ -493,7 +493,7 @@ const ProjectComp = () => {
     navigate(`/calendar?${params.toString()}`);
   };
 
-  // Enhanced members list with membership type detection - FIXED
+  // Enhanced members list with simplified display - SIMPLIFIED with owner sorting
   const getMembersList = () => {
     if (!projectData?.allMembers || projectData.allMembers.size === 0) {
       console.log('⚠️ No members found in projectData:', projectData);
@@ -506,26 +506,22 @@ const ProjectComp = () => {
       usersLoaded: users.length
     });
     
-    return Array.from(projectData.allMembers).map(userId => {
+    const membersList = Array.from(projectData.allMembers).map(userId => {
       const user = users.find(u => u.user_id === userId);
-      const isFromTask = projectData.taskMembers?.has(userId);
       const isOwner = userId === projectData.ownerId;
-      
-      // Determine membership type
-      let membershipType;
-      if (isOwner) {
-        membershipType = 'Owner';
-      } else if (isFromTask) {
-        membershipType = 'From Tasks';
-      } else {
-        membershipType = 'Invited';
-      }
       
       return {
         ...(user || { user_id: userId, full_name: 'Unknown User', role: 'Unknown' }),
-        membershipType,
+        isOwner,
         canRemove: !isOwner && projectData.ownerId === parseInt(selectedUserId)
       };
+    });
+    
+    // Sort so owner is always first
+    return membersList.sort((a, b) => {
+      if (a.isOwner && !b.isOwner) return -1; // Owner goes first
+      if (!a.isOwner && b.isOwner) return 1;  // Owner goes first
+      return 0; // Keep original order for non-owners
     });
   };
 
@@ -1162,7 +1158,7 @@ const ProjectComp = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Enhanced Members Dialog with remove functionality */}
+      {/* Enhanced Members Dialog with simplified display */}
       <Dialog 
         open={showMembersDialog} 
         onClose={() => setShowMembersDialog(false)} 
@@ -1189,16 +1185,7 @@ const ProjectComp = () => {
                   </Avatar>
                   <ListItemText
                     primary={member.full_name}
-                    secondary={
-                      <Box>
-                        <Typography variant="caption" display="block">
-                          Role: {member.role}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Membership: {member.membershipType}
-                        </Typography>
-                      </Box>
-                    }
+                    secondary={`Role: ${member.role}`}
                   />
                   <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
                     <Button
@@ -1209,7 +1196,7 @@ const ProjectComp = () => {
                     >
                       View Schedule
                     </Button>
-                    {member.membershipType === 'Owner' ? (
+                    {member.isOwner ? (
                       <Chip 
                         label="Owner" 
                         size="small" 
@@ -1224,14 +1211,7 @@ const ProjectComp = () => {
                       >
                         Remove
                       </Button>
-                    ) : (
-                      <Chip 
-                        label="From Tasks" 
-                        size="small" 
-                        color="info" 
-                        variant="outlined"
-                      />
-                    )}
+                    ) : null}
                   </Box>
                 </ListItem>
               ))}

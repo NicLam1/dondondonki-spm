@@ -17,11 +17,18 @@ import {
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RestoreIcon from '@mui/icons-material/Restore';
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import { useQuery } from "@tanstack/react-query";
 import Sidebar from '../components/Sidebar';
 import Topbar from '../components/Topbar';
+
+// Add these imports for sidebar icons
+import DashboardIcon from "@mui/icons-material/Dashboard";
+import TaskIcon from "@mui/icons-material/Task";
+import FolderIcon from "@mui/icons-material/Folder";
+import PersonIcon from "@mui/icons-material/Person";
+import SettingsIcon from "@mui/icons-material/Settings";
+import MailIcon from "@mui/icons-material/Mail";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
@@ -103,9 +110,14 @@ export default function TrashPage() {
   };
 
   const sidebarItems = [
-    { key: "tasks", label: "Tasks" },
-    { key: "calendar", label: "Calendar", icon: <CalendarMonthIcon /> },
-    { key: "trash", label: "Trash", badge: deletedTasks.length > 0 ? deletedTasks.length : undefined },
+    { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
+    { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
+    { key: "calendar", icon: <CalendarMonthIcon />, label: "Calendar" },
+    { key: "projects", icon: <FolderIcon />, label: "Projects" },
+    { key: "profile", icon: <PersonIcon />, label: "Profile" },
+    { key: "settings", icon: <SettingsIcon />, label: "Settings" },
+    { key: "messages", icon: <MailIcon />, label: "Messages", badge: 12 },
+    { key: "trash", icon: <DeleteIcon />, label: "Trash", badge: deletedTasks.length > 0 ? deletedTasks.length : undefined },
   ];
 
   return (
@@ -115,13 +127,6 @@ export default function TrashPage() {
         onToggle={() => setIsSidebarOpen((v) => !v)}
         items={sidebarItems}
         title="DonkiBoard"
-        onItemClick={(key) => {
-          if (key === "tasks") {
-            window.location.href = "/tasks";
-          } else if (key === "calendar") {
-            window.location.href = "/calendar";
-          }
-        }}
       />
 
       <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
@@ -129,14 +134,7 @@ export default function TrashPage() {
         
         <Box sx={{ p: 3 }}>
           <Container maxWidth={false} disableGutters sx={{ px: 3 }}>
-            <Box sx={{ mb: 4, display: "flex", alignItems: "center", gap: 2 }}>
-              <Button
-                startIcon={<ArrowBackIcon />}
-                onClick={() => window.location.href = "/tasks"}
-                sx={{ color: 'text.secondary' }}
-              >
-                Back to Tasks
-              </Button>
+            <Box sx={{ mb: 4 }}>
               <Typography variant="h5" sx={{ fontWeight: 700, letterSpacing: 0.2, fontSize: "3em" }}>
                 Trash
               </Typography>
