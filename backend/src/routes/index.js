@@ -306,7 +306,7 @@ router.get('/users', async (req, res) => {
   res.json({ data });
 });
 
-// Get all projects with access control
+// Get all projects with access control - UPDATED with team/department logic
 router.get('/projects', async (req, res) => {
   console.log('🔥 /projects route HIT!');
   const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
@@ -319,10 +319,10 @@ router.get('/projects', async (req, res) => {
   }
 
   try {
-    // Load acting user to check access level
+    // Load acting user with team/department info
     const { data: acting, error: actingErr } = await supabase
       .from('users')
-      .select('user_id, access_level')
+      .select('user_id, access_level, team_id, department_id')
       .eq('user_id', actingUserId)
       .single();
     
@@ -337,10 +337,13 @@ router.get('/projects', async (req, res) => {
 
     console.log('✅ Projects - Acting user loaded:', acting);
 
-    // Get all projects
+    // Get all projects with owner info
     const { data: allProjects, error: projectsErr } = await supabase
       .from('projects')
-      .select('*')
+      .select(`
+        *,
+        owner:users!owner_id(user_id, access_level, team_id, department_id)
+      `)
       .order('project_id');
     
     if (projectsErr) {
@@ -350,31 +353,36 @@ router.get('/projects', async (req, res) => {
 
     console.log('📊 Projects - Raw projects data:', allProjects);
 
-    // Filter projects based on access level - same hierarchy logic as tasks
+    // Apply NEW team/department hierarchy filtering
+    let filteredProjects;
+    
     if (acting.access_level === 0) {
       // Staff: only see projects they own
-      const filtered = (allProjects || []).filter(project => project.owner_id === actingUserId);
-      console.log('👤 Staff user - filtered projects:', filtered);
-      return res.json({ data: filtered });
+      filteredProjects = (allProjects || []).filter(project => project.owner_id === actingUserId);
+    } else if (acting.access_level === 1) {
+      // Manager: see projects within same team
+      filteredProjects = (allProjects || []).filter(project => {
+        if (project.owner_id === actingUserId) return true; // Own projects
+        const owner = project.owner;
+        return owner && owner.team_id === acting.team_id; // Same team
+      });
+    } else if (acting.access_level === 2) {
+      // Director: see projects within same department
+      filteredProjects = (allProjects || []).filter(project => {
+        if (project.owner_id === actingUserId) return true; // Own projects
+        const owner = project.owner;
+        return owner && owner.department_id === acting.department_id; // Same department
+      });
+    } else if (acting.access_level === 3) {
+      // HR: see everything
+      filteredProjects = allProjects || [];
     } else {
-      // Manager/Director: see own projects and projects from users with lower access levels
-      const { data: allUsers, error: usersErr } = await supabase
-        .from('users')
-        .select('user_id, access_level');
-      if (usersErr) {
-        console.log('❌ Projects - Error loading users:', usersErr);
-        return res.status(500).json({ error: usersErr.message });
-      }
-
-      const allowedOwnerIds = new Set([
-        actingUserId,
-        ...allUsers.filter(u => u.access_level < acting.access_level).map(u => u.user_id)
-      ]);
-
-      const filtered = (allProjects || []).filter(project => allowedOwnerIds.has(project.owner_id));
-      console.log('👑 Manager/Director user - filtered projects:', filtered);
-      return res.json({ data: filtered });
+      // Unknown access level - default to own only
+      filteredProjects = (allProjects || []).filter(project => project.owner_id === actingUserId);
     }
+
+    console.log(`👑 User with access level ${acting.access_level} - filtered projects:`, filteredProjects);
+    return res.json({ data: filteredProjects });
   } catch (error) {
     console.log('❌ Projects - Unexpected error:', error);
     return res.status(500).json({ error: 'Internal server error' });
@@ -584,25 +592,41 @@ router.get('/tasks', async (req, res) => {
     : [];
   const hasUserIdsParam = Object.prototype.hasOwnProperty.call(req.query, 'user_ids');
 
-  // If acting user provided, enforce access rules: can view self and any user with lower access_level
+  // If acting user provided, enforce NEW team/department access rules
   if (!Number.isNaN(actingUserId)) {
     const { data: actingData, error: actingErr } = await supabase
       .from('users')
-      .select('user_id, access_level')
+      .select('user_id, access_level, team_id, department_id')
       .eq('user_id', actingUserId)
       .single();
     if (actingErr) return res.status(500).json({ error: actingErr.message });
     if (!actingData) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
+    // Get all users with team/department info
     const { data: allUsers, error: usersErr } = await supabase
       .from('users')
-      .select('user_id, access_level');
+      .select('user_id, access_level, team_id, department_id');
     if (usersErr) return res.status(500).json({ error: usersErr.message });
 
-    const allowedTargetIds = new Set([
-      actingUserId,
-      ...allUsers.filter((u) => u.access_level < actingData.access_level).map((u) => u.user_id),
-    ]);
+    // NEW: Team/Department hierarchy logic
+    let allowedTargetIds = new Set([actingUserId]); // Always include self
+
+    if (actingData.access_level === 0) {
+      // Staff: only own tasks
+      allowedTargetIds = new Set([actingUserId]);
+    } else if (actingData.access_level === 1) {
+      // Manager: same team members
+      const teamMembers = allUsers.filter(u => u.team_id === actingData.team_id);
+      allowedTargetIds = new Set(teamMembers.map(u => u.user_id));
+    } else if (actingData.access_level === 2) {
+      // Director: same department members
+      const deptMembers = allUsers.filter(u => u.department_id === actingData.department_id);
+      allowedTargetIds = new Set(deptMembers.map(u => u.user_id));
+    } else if (actingData.access_level === 3) {
+      // HR: everyone
+      allowedTargetIds = new Set(allUsers.map(u => u.user_id));
+    }
+
     const candidateTargets = hasUserIdsParam ? requestedUserIds : [actingUserId];
     const effectiveTargets = candidateTargets.filter((id) => allowedTargetIds.has(id));
 
@@ -1168,36 +1192,39 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   });
 });
 
-// Get deleted tasks (Trash view)
+// Get deleted tasks (Trash view) - UPDATED with team/department logic
 router.get('/tasks/deleted', async (req, res) => {
-  console.log('🔥 /tasks/deleted route HIT!'); // ADD THIS AS THE VERY FIRST LINE
+  console.log('🔥 /tasks/deleted route HIT!');
   const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
   const project = req.query.project;
   const startDate = req.query.start_date;
   const endDate = req.query.end_date;
 
-  console.log('🗑️ DELETED TASKS - Raw query:', req.query); // ADD THIS LINE
-  console.log('🗑️ DELETED TASKS - Parsed actingUserId:', actingUserId); // ADD THIS LINE
+  console.log('🗑️ DELETED TASKS - Raw query:', req.query);
+  console.log('🗑️ DELETED TASKS - Parsed actingUserId:', actingUserId);
 
   if (Number.isNaN(actingUserId)) {
-    console.log('🗑️ DELETED TASKS - Returning 400: acting_user_id is NaN'); // ADD THIS LINE
+    console.log('🗑️ DELETED TASKS - Returning 400: acting_user_id is NaN');
     return res.status(400).json({ error: 'acting_user_id is required' });
   }
 
-  // Load acting user to check access level
+  // Load acting user with team/department info
   const { data: acting, error: actingErr } = await supabase
     .from('users')
-    .select('user_id, access_level')
+    .select('user_id, access_level, team_id, department_id')
     .eq('user_id', actingUserId)
     .single();
   
   if (actingErr) return res.status(500).json({ error: actingErr.message });
   if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
-  // Build query for deleted tasks
+  // Build query for deleted tasks with owner info
   let query = supabase
     .from('tasks')
-    .select('task_id, title, description, status, priority_bucket, due_date, project, owner_id, members_id, parent_task_id, deleted_at, deleted_by, created_at')
+    .select(`
+      task_id, title, description, status, priority_bucket, due_date, project, owner_id, members_id, parent_task_id, deleted_at, deleted_by, created_at,
+      owner:users!owner_id(user_id, access_level, team_id, department_id)
+    `)
     .eq('is_deleted', true)
     .order('deleted_at', { ascending: false });
 
@@ -1215,27 +1242,35 @@ router.get('/tasks/deleted', async (req, res) => {
   const { data: deletedTasks, error: tasksErr } = await query;
   if (tasksErr) return res.status(500).json({ error: tasksErr.message });
 
-  // Filter tasks based on access level - user can see:
-  // 1. Tasks they own
-  // 2. Tasks owned by users with lower access level (if they're manager/director)
-  if (acting.access_level === 0) { // Staff - only see own tasks
-    const filtered = deletedTasks.filter(task => task.owner_id === actingUserId);
-    return res.json({ data: filtered });
+  // NEW: Filter tasks based on team/department hierarchy
+  let filtered;
+  
+  if (acting.access_level === 0) {
+    // Staff: only see own tasks
+    filtered = deletedTasks.filter(task => task.owner_id === actingUserId);
+  } else if (acting.access_level === 1) {
+    // Manager: see tasks from same team
+    filtered = deletedTasks.filter(task => {
+      if (task.owner_id === actingUserId) return true; // Own tasks
+      const owner = task.owner;
+      return owner && owner.team_id === acting.team_id; // Same team
+    });
+  } else if (acting.access_level === 2) {
+    // Director: see tasks from same department
+    filtered = deletedTasks.filter(task => {
+      if (task.owner_id === actingUserId) return true; // Own tasks
+      const owner = task.owner;
+      return owner && owner.department_id === acting.department_id; // Same department
+    });
+  } else if (acting.access_level === 3) {
+    // HR: see everything
+    filtered = deletedTasks;
   } else {
-    // Manager/Director - see own tasks and tasks from lower access levels
-    const { data: allUsers, error: usersErr } = await supabase
-      .from('users')
-      .select('user_id, access_level');
-    if (usersErr) return res.status(500).json({ error: usersErr.message });
-
-    const allowedOwnerIds = new Set([
-      actingUserId,
-      ...allUsers.filter(u => u.access_level < acting.access_level).map(u => u.user_id)
-    ]);
-
-    const filtered = deletedTasks.filter(task => allowedOwnerIds.has(task.owner_id));
-    return res.json({ data: filtered });
+    // Unknown access level - default to own only
+    filtered = deletedTasks.filter(task => task.owner_id === actingUserId);
   }
+
+  return res.json({ data: filtered });
 });
 
 // Return a single task with access checks via acting_user_id
@@ -1654,7 +1689,7 @@ router.get('/tasks/:id/activity', async (req, res) => {
 
   const isOwner = task.owner_id === actingUserId;
   const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
-  const outranksOwner = owner && acting.access_level > owner.access_level;
+  const outranksOwner = owner && (acting.access_level > owner.access_level);
   const canView = isOwner || isMember || outranksOwner;
   if (!canView) return res.status(403).json({ error: 'Forbidden' });
 
@@ -1747,7 +1782,7 @@ router.get('/tasks/:id/activity', async (req, res) => {
       taskId: row.task_id,
       authorId: row.author_id,
       author: row.author_id ? usersById[row.author_id] || null : null,
-      type: row.type,
+           type: row.type,
       summary,
       metadata: row.metadata || {},
       createdAt: row.created_at,

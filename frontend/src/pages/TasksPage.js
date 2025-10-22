@@ -24,7 +24,6 @@ import {
   Stack,
   Typography,
   IconButton,
-  Menu,
   TextField,
 } from "@mui/material";
 import Snackbar from "@mui/material/Snackbar";
@@ -36,9 +35,7 @@ import MailIcon from "@mui/icons-material/Mail";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddIcon from "@mui/icons-material/Add";
-import DeleteIcon from "@mui/icons-material/Delete"; 
-// import MenuOpenIcon from '@mui/icons-material/MenuOpen';
-// import MenuIcon from '@mui/icons-material/Menu';
+import DeleteIcon from "@mui/icons-material/Delete";
 import FolderIcon from '@mui/icons-material/Folder';
 import TaskIcon from '@mui/icons-material/Task';
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
@@ -46,7 +43,6 @@ import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 //OUR COMPONENT IMPORTS
-
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import DeleteButton from '../components/DeleteButton';
@@ -426,12 +422,37 @@ const handleTaskCreated = (newTask) => {
     return null;
   }, [users, selectedUserId]);
 
-  // Strict outrank rule (include self)
+  // NEW: Team/Department hierarchy logic for frontend user selection
   const allowedUsers = useMemo(() => {
-    if (!actingUser) return [];
-    return users.filter(
-      (u) => u.user_id === actingUser.user_id || u.access_level < actingUser.access_level
-    );
+    if (!actingUser || !users.length) return [];
+    
+    // Always include self
+    const allowed = [actingUser];
+    
+    if (actingUser.access_level === 0) {
+      // Staff: only self
+      return allowed;
+    } else if (actingUser.access_level === 1) {
+      // Manager: same team members
+      const teamMembers = users.filter(u => 
+        u.user_id !== actingUser.user_id && // Exclude self (already added)
+        u.team_id === actingUser.team_id
+      );
+      return [...allowed, ...teamMembers];
+    } else if (actingUser.access_level === 2) {
+      // Director: same department members
+      const deptMembers = users.filter(u => 
+        u.user_id !== actingUser.user_id && // Exclude self (already added)
+        u.department_id === actingUser.department_id
+      );
+      return [...allowed, ...deptMembers];
+    } else if (actingUser.access_level === 3) {
+      // HR: everyone
+      return users;
+    }
+    
+    // Fallback: only self
+    return allowed;
   }, [users, actingUser]);
 
   useEffect(() => {
@@ -528,7 +549,8 @@ const handleTaskCreated = (newTask) => {
     // Show all tasks (including subtasks) in their respective columns
     for (const t of tasks) {
       const derived = t.assignee_id == null ? 'UNASSIGNED' : (t.status || 'ONGOING');
-      if (group[derived]) group[derived].push(t); else group.UNASSIGNED.push(t);
+      if (group[derived]) group[derived].push(t); 
+      else group.UNASSIGNED.push(t);
     }
     Object.keys(group).forEach((k) =>
       group[k].sort((a, b) => {

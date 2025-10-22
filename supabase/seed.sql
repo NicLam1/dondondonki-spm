@@ -276,3 +276,131 @@ WHERE project_id IN (
   SELECT DISTINCT project_id 
   FROM public.projects
 );
+
+-- Insert departments
+INSERT INTO public.departments (department_name) VALUES
+  ('Engineering'),
+  ('Sales')
+ON CONFLICT (department_name) DO NOTHING;
+
+-- Insert teams
+INSERT INTO public.teams (team_name, department_id) VALUES
+  ('Frontend', (SELECT department_id FROM public.departments WHERE department_name = 'Engineering')),
+  ('Backend', (SELECT department_id FROM public.departments WHERE department_name = 'Engineering')),
+  ('Inside Sales', (SELECT department_id FROM public.departments WHERE department_name = 'Sales'))
+ON CONFLICT (team_name, department_id) DO NOTHING;
+
+-- UPDATE existing users to assign them to teams/departments (NO DELETION)
+UPDATE public.users SET 
+  department_id = (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+  team_id = (SELECT team_id FROM public.teams WHERE team_name = 'Frontend')
+WHERE email = 'staff@example.com';
+
+UPDATE public.users SET 
+  department_id = (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+  team_id = (SELECT team_id FROM public.teams WHERE team_name = 'Backend')
+WHERE email = 'manager@example.com';
+
+UPDATE public.users SET 
+  department_id = (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+  team_id = NULL -- Directors belong to departments, not specific teams
+WHERE email = 'director@example.com';
+
+-- ADD new users for the demo (safe additions)
+INSERT INTO public.users (email, full_name, role, access_level, department_id, team_id) VALUES
+  -- Frontend Team
+  ('alice@example.com', 'Alice Frontend Manager', 'MANAGER', 1, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Frontend')),
+  ('bob@example.com', 'Bob Staff', 'STAFF', 0, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Frontend')),
+  ('carol@example.com', 'Carol Staff', 'STAFF', 0, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Frontend')),
+  
+  -- Backend Team  
+  ('dave@example.com', 'Dave Backend Manager', 'MANAGER', 1, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Backend')),
+  ('eve@example.com', 'Eve Staff', 'STAFF', 0, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Backend')),
+  ('frank@example.com', 'Frank Staff', 'STAFF', 0, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Backend')),
+
+  -- Sales Department
+  ('grace@example.com', 'Grace Sales Manager', 'MANAGER', 1, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Sales'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Inside Sales')),
+  ('henry@example.com', 'Henry Staff', 'STAFF', 0, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Sales'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Inside Sales')),
+  ('iris@example.com', 'Iris Staff', 'STAFF', 0, 
+   (SELECT department_id FROM public.departments WHERE department_name = 'Sales'),
+   (SELECT team_id FROM public.teams WHERE team_name = 'Inside Sales')),
+
+  -- DIRECTORS for each department (NEW)
+  ('eng.director@example.com', 'Ellen Engineering Director', 'DIRECTOR', 2,
+   (SELECT department_id FROM public.departments WHERE department_name = 'Engineering'),
+   NULL), -- Directors belong to departments, not specific teams
+  ('sales.director@example.com', 'Steve Sales Director', 'DIRECTOR', 2,
+   (SELECT department_id FROM public.departments WHERE department_name = 'Sales'),
+   NULL),
+
+  -- HR User (sees everything, no department restriction)
+  ('hr@example.com', 'Helen HR Manager', 'HR', 3, NULL, NULL)
+ON CONFLICT (email) DO UPDATE SET
+  department_id = EXCLUDED.department_id,
+  team_id = EXCLUDED.team_id,
+  role = EXCLUDED.role,
+  access_level = EXCLUDED.access_level;
+
+
+
+-- Simple sample tasks
+INSERT INTO public.tasks (title, description, status, priority_bucket, due_date, project, owner_id, assignee_id, members_id, is_deleted)
+SELECT 'Frontend Development Task', 'Build user interface', 'ONGOING', 3, current_date + interval '7 days', 'Web App', alice.user_id, bob.user_id, array[bob.user_id, carol.user_id]::integer[], false
+FROM (SELECT user_id FROM public.users WHERE email = 'alice@example.com') alice,
+     (SELECT user_id FROM public.users WHERE email = 'bob@example.com') bob,
+     (SELECT user_id FROM public.users WHERE email = 'carol@example.com') carol;
+
+INSERT INTO public.tasks (title, description, status, priority_bucket, due_date, project, owner_id, assignee_id, members_id, is_deleted)
+SELECT 'Backend API Task', 'Develop REST API', 'ONGOING', 2, current_date + interval '10 days', 'Web App', dave.user_id, eve.user_id, array[eve.user_id, frank.user_id]::integer[], false
+FROM (SELECT user_id FROM public.users WHERE email = 'dave@example.com') dave,
+     (SELECT user_id FROM public.users WHERE email = 'eve@example.com') eve,
+     (SELECT user_id FROM public.users WHERE email = 'frank@example.com') frank;
+
+INSERT INTO public.tasks (title, description, status, priority_bucket, due_date, project, owner_id, assignee_id, members_id, is_deleted)
+SELECT 'Sales Outreach', 'Contact potential clients', 'UNASSIGNED', 5, current_date + interval '5 days', 'Q3 Sales', grace.user_id, null, array[henry.user_id, iris.user_id]::integer[], false
+FROM (SELECT user_id FROM public.users WHERE email = 'grace@example.com') grace,
+     (SELECT user_id FROM public.users WHERE email = 'henry@example.com') henry,
+     (SELECT user_id FROM public.users WHERE email = 'iris@example.com') iris;
+
+-- Simple sample projects
+INSERT INTO public.projects (name, description, end_date, owner_id, tasks, members)
+SELECT 'Web Application', 'Company web application project', current_date + interval '60 days', alice.user_id, '{}', array[alice.user_id, bob.user_id, carol.user_id, dave.user_id, eve.user_id, frank.user_id]::integer[]
+FROM (SELECT user_id FROM public.users WHERE email = 'alice@example.com') alice,
+     (SELECT user_id FROM public.users WHERE email = 'bob@example.com') bob,
+     (SELECT user_id FROM public.users WHERE email = 'carol@example.com') carol,
+     (SELECT user_id FROM public.users WHERE email = 'dave@example.com') dave,
+     (SELECT user_id FROM public.users WHERE email = 'eve@example.com') eve,
+     (SELECT user_id FROM public.users WHERE email = 'frank@example.com') frank;
+
+INSERT INTO public.projects (name, description, end_date, owner_id, tasks, members)
+SELECT 'Q3 Sales Campaign', 'Third quarter sales initiative', current_date + interval '90 days', grace.user_id, '{}', array[grace.user_id, henry.user_id, iris.user_id]::integer[]
+FROM (SELECT user_id FROM public.users WHERE email = 'grace@example.com') grace,
+     (SELECT user_id FROM public.users WHERE email = 'henry@example.com') henry,
+     (SELECT user_id FROM public.users WHERE email = 'iris@example.com') iris;
+
+-- Link tasks to projects
+UPDATE public.tasks SET project_id = (SELECT project_id FROM public.projects WHERE name = 'Web Application' LIMIT 1) WHERE project = 'Web App';
+UPDATE public.tasks SET project_id = (SELECT project_id FROM public.projects WHERE name = 'Q3 Sales Campaign' LIMIT 1) WHERE project = 'Q3 Sales';
+
+-- Update projects with task IDs
+UPDATE public.projects 
+SET tasks = COALESCE(
+  (SELECT array_agg(task_id ORDER BY task_id) FROM public.tasks WHERE public.tasks.project_id = public.projects.project_id AND is_deleted = false), 
+  '{}'::integer[]
+);
