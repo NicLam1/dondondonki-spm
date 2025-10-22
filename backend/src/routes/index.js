@@ -2994,4 +2994,169 @@ router.post('/tasks/:id/stop-recurrence', async (req, res) => {
   }
 });
 
+// Get reminder settings for a task
+router.get('/tasks/:id/reminders', async (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  const actingUserId = req.query.acting_user_id ? parseInt(req.query.acting_user_id, 10) : NaN;
+  
+  if (Number.isNaN(taskId)) return res.status(400).json({ error: 'Invalid task id' });
+  if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  try {
+    // Check if user has access to this task
+    const hasAccess = await checkTaskAccess(taskId, actingUserId);
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'No access to this task' });
+    }
+
+    // Get reminder settings
+    const { data: reminder, error } = await supabase
+      .from('task_reminders')
+      .select('*')
+      .eq('task_id', taskId)
+      .maybeSingle();
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    // Return default settings if none exist
+    const settings = reminder || {
+      enabled: false,
+      days_before: 3,
+      frequency_per_day: 1
+    };
+
+    return res.json({ success: true, data: settings });
+  } catch (error) {
+    console.error('Get reminders error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Set reminder settings for a task (only task owner can set)
+router.put('/tasks/:id/reminders', async (req, res) => {
+  const taskId = parseInt(req.params.id, 10);
+  const { acting_user_id, enabled, days_before, frequency_per_day } = req.body;
+  
+  if (Number.isNaN(taskId)) return res.status(400).json({ error: 'Invalid task id' });
+  if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
+
+  // Validate inputs
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be true or false' });
+  }
+  if (![1, 3, 7].includes(days_before)) {
+    return res.status(400).json({ error: 'days_before must be 1, 3, or 7' });
+  }
+  if (![1, 2, 3].includes(frequency_per_day)) {
+    return res.status(400).json({ error: 'frequency_per_day must be 1, 2, or 3' });
+  }
+
+  try {
+    // Get task and verify ownership
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks')
+      .select('task_id, owner_id, title')
+      .eq('task_id', taskId)
+      .eq('is_deleted', false)
+      .single();
+    
+    if (taskErr) return res.status(500).json({ error: taskErr.message });
+    if (!task) return res.status(404).json({ error: 'Task not found' });
+
+    // Only task owner can set reminders
+    if (task.owner_id !== acting_user_id) {
+      return res.status(403).json({ error: 'Only the task owner can set reminders' });
+    }
+
+    // Upsert reminder settings
+    const { data: reminder, error: reminderErr } = await supabase
+      .from('task_reminders')
+      .upsert({
+        task_id: taskId,
+        enabled,
+        days_before,
+        frequency_per_day,
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (reminderErr) {
+      return res.status(500).json({ error: reminderErr.message });
+    }
+
+    return res.json({ 
+      success: true, 
+      message: `Reminders ${enabled ? 'enabled' : 'disabled'} for "${task.title}"`,
+      data: reminder 
+    });
+  } catch (error) {
+    console.error('Set reminders error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Manual trigger for testing reminders (development only)
+router.post('/reminders/check', async (req, res) => {
+  try {
+    const { data: reminders, error } = await supabase
+      .from('task_reminders')
+      .select(`
+        *,
+        task:tasks(task_id, title, due_date, owner_id, assignee_id, members_id)
+      `)
+      .eq('enabled', true);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const results = [];
+    const now = new Date();
+
+    for (const reminder of reminders || []) {
+      const task = reminder.task;
+      if (!task || !task.due_date) continue;
+
+      const dueDate = new Date(task.due_date);
+      const timeDiff = dueDate.getTime() - now.getTime();
+      const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+      // Check if we should send reminders for this task
+      if (daysDiff <= reminder.days_before && daysDiff >= 0) {
+        // Get all users who should receive reminders (owner, assignee, members)
+        const userIds = new Set();
+        if (task.owner_id) userIds.add(task.owner_id);
+        if (task.assignee_id) userIds.add(task.assignee_id);
+        if (Array.isArray(task.members_id)) {
+          task.members_id.forEach(id => userIds.add(id));
+        }
+
+        for (const userId of userIds) {
+          // For testing, just log what would be sent
+          console.log(`📧 Reminder would be sent to user ${userId} for task "${task.title}" (due in ${daysDiff} days)`);
+          results.push({
+            task_id: task.task_id,
+            user_id: userId,
+            task_title: task.title,
+            days_until_due: daysDiff,
+            frequency_per_day: reminder.frequency_per_day
+          });
+        }
+      }
+    }
+
+    return res.json({ 
+      success: true, 
+      message: `Checked ${reminders?.length || 0} reminder settings`,
+      reminders_to_send: results
+    });
+  } catch (error) {
+    console.error('Check reminders error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
