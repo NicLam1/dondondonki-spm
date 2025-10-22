@@ -300,7 +300,7 @@ async function createNextRecurringInstance(originalTask, actingUserId) {
 router.get('/users', async (req, res) => {
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, email, full_name, role, access_level, created_at')
+    .select('user_id, email, full_name, role, access_level, team_id, department_id, created_at')
     .order('user_id');
   if (error) return res.status(500).json({ error: error.message });
   res.json({ data });
@@ -360,12 +360,13 @@ router.get('/projects', async (req, res) => {
       // Staff: only see projects they own
       filteredProjects = (allProjects || []).filter(project => project.owner_id === actingUserId);
     } else if (acting.access_level === 1) {
-      // Manager: see projects within same team
-      filteredProjects = (allProjects || []).filter(project => {
+      // Manager: only subordinates (access_level < 1) in same team
+      const subordinates = (allProjects || []).filter(project => {
         if (project.owner_id === actingUserId) return true; // Own projects
         const owner = project.owner;
-        return owner && owner.team_id === acting.team_id; // Same team
+        return owner && owner.team_id === acting.team_id && owner.access_level < 1; // Same team, not manager
       });
+      filteredProjects = subordinates;
     } else if (acting.access_level === 2) {
       // Director: see projects within same department
       filteredProjects = (allProjects || []).filter(project => {
@@ -592,43 +593,66 @@ router.get('/tasks', async (req, res) => {
     : [];
   const hasUserIdsParam = Object.prototype.hasOwnProperty.call(req.query, 'user_ids');
 
+  console.log('🔥 Tasks request:', {
+    actingUserId,
+    requestedUserIds,
+    hasUserIdsParam,
+    singleUserId
+  });
+
   // If acting user provided, enforce NEW team/department access rules
   if (!Number.isNaN(actingUserId)) {
     const { data: actingData, error: actingErr } = await supabase
       .from('users')
-      .select('user_id, access_level, team_id, department_id')
+      .select('user_id, access_level, team_id, department_id, full_name')
       .eq('user_id', actingUserId)
       .single();
     if (actingErr) return res.status(500).json({ error: actingErr.message });
     if (!actingData) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
+    console.log('👤 Acting user:', actingData);
+
     // Get all users with team/department info
     const { data: allUsers, error: usersErr } = await supabase
       .from('users')
-      .select('user_id, access_level, team_id, department_id');
+      .select('user_id, access_level, team_id, department_id, full_name');
     if (usersErr) return res.status(500).json({ error: usersErr.message });
 
-    // NEW: Team/Department hierarchy logic
+    console.log('👥 All users loaded:', allUsers.length);
+
+    // OPTION 1: Managers only see subordinates (not peer managers)
     let allowedTargetIds = new Set([actingUserId]); // Always include self
 
     if (actingData.access_level === 0) {
       // Staff: only own tasks
       allowedTargetIds = new Set([actingUserId]);
+      console.log('👤 Staff access - only self');
     } else if (actingData.access_level === 1) {
-      // Manager: same team members
-      const teamMembers = allUsers.filter(u => u.team_id === actingData.team_id);
-      allowedTargetIds = new Set(teamMembers.map(u => u.user_id));
+      // Manager: only subordinates (access_level < 1) in same team
+      const subordinates = (allUsers || []).filter(project => {
+        if (project.owner_id === actingUserId) return true; // Own projects
+        const owner = project.owner;
+        return owner && owner.team_id === acting.team_id && owner.access_level < 1; // Same team, not manager
+      });
+      allowedTargetIds = new Set([actingUserId, ...subordinates.map(u => u.user_id)]);
+      console.log('👥 Manager access - subordinates only:', subordinates.map(u => u.full_name));
     } else if (actingData.access_level === 2) {
-      // Director: same department members
-      const deptMembers = allUsers.filter(u => u.department_id === actingData.department_id);
-      allowedTargetIds = new Set(deptMembers.map(u => u.user_id));
+      // Director: see projects within same department
+      filteredProjects = (allProjects || []).filter(project => {
+        if (project.owner_id === actingUserId) return true; // Own projects
+        const owner = project.owner;
+        return owner && owner.department_id === acting.department_id; // Same department
+      });
     } else if (actingData.access_level === 3) {
-      // HR: everyone
+      // HR: see everything
       allowedTargetIds = new Set(allUsers.map(u => u.user_id));
+      console.log('👑 HR access - everyone');
     }
 
     const candidateTargets = hasUserIdsParam ? requestedUserIds : [actingUserId];
     const effectiveTargets = candidateTargets.filter((id) => allowedTargetIds.has(id));
+
+    console.log('🎯 Effective targets:', effectiveTargets);
 
     if (effectiveTargets.length === 0) return res.json({ data: [] });
 
@@ -649,9 +673,14 @@ router.get('/tasks', async (req, res) => {
       .eq('is_deleted', false);
     if (memberErr) return res.status(500).json({ error: memberErr.message });
 
+    console.log('📊 Tasks found:', {
+      ownerTasks: ownerTasks?.length || 0,
+      memberTasks: memberTasks?.length || 0
+    });
+
     // Merge, de-dupe by task_id
     const map = new Map();
-    [...ownerTasks, ...memberTasks].forEach((t) => map.set(t.task_id, t));
+    [...(ownerTasks || []), ...(memberTasks || [])].forEach((t) => map.set(t.task_id, t));
     return res.json({ data: Array.from(map.values()).map((t) => ({ ...t, status: mapLegacyStatus(t.status) })) });
   }
 
@@ -1253,12 +1282,12 @@ router.get('/tasks/deleted', async (req, res) => {
     filtered = deletedTasks.filter(task => {
       if (task.owner_id === actingUserId) return true; // Own tasks
       const owner = task.owner;
-      return owner && owner.team_id === acting.team_id; // Same team
+      return owner && owner.team_id === acting.team_id && owner.access_level < 1; // Same team, not manager
     });
   } else if (acting.access_level === 2) {
     // Director: see tasks from same department
     filtered = deletedTasks.filter(task => {
-      if (task.owner_id === actingUserId) return true; // Own tasks
+      if (task.owner_id === actingUserId) return true; // Own projects
       const owner = task.owner;
       return owner && owner.department_id === acting.department_id; // Same department
     });
@@ -1907,7 +1936,7 @@ router.put('/tasks/:id/priority', async (req, res) => {
     message: `Task "${task.title}" priority updated to P${priority_bucket}`,
     data: updatedTask
   });
-});
+};
 
 
 
@@ -2556,9 +2585,6 @@ async function updateProjectMembersFromTasks(projectId) {
     // Calculate task-derived members
     const taskMembers = new Set();
     (projectTasks || []).forEach(task => {
-
-
-
       if (task.owner_id) taskMembers.add(task.owner_id);
       if (task.assignee_id) taskMembers.add(task.assignee_id);
       if (Array.isArray(task.members_id)) {

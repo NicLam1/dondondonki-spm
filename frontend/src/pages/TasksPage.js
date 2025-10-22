@@ -411,20 +411,39 @@ const handleTaskCreated = (newTask) => {
 
   const actingUser = useMemo(() => {
     const found = users.find((u) => String(u.user_id) === String(selectedUserId));
-    if (found) return found;
+    if (found) {
+      console.log('✅ Found acting user:', found);
+      return found;
+    }
     try {
       const stored = JSON.parse(localStorage.getItem("user") || "{}");
       const uid = stored?.profile?.user_id ?? stored?.user_id;
       if (uid) {
+        console.log('⚠️ Using stored user, looking for:', uid);
+        const storedUser = users.find((u) => u.user_id === uid);
+        if (storedUser) {
+          console.log('✅ Found stored user:', storedUser);
+          return storedUser;
+        }
+        console.log('❌ Stored user not found in users list');
         return { ...stored, user_id: uid };
       }
     } catch (_) {}
+    console.log('❌ No acting user found');
     return null;
   }, [users, selectedUserId]);
 
-  // NEW: Team/Department hierarchy logic for frontend user selection
+  // KEEP: Team/Department hierarchy logic for frontend user selection
+  // OPTION 1: Managers only see subordinates (not peer managers)
   const allowedUsers = useMemo(() => {
     if (!actingUser || !users.length) return [];
+    
+    console.log('🔍 allowedUsers calculation:', {
+      actingUser: actingUser.full_name,
+      access_level: actingUser.access_level,
+      team_id: actingUser.team_id,
+      department_id: actingUser.department_id
+    });
     
     // Always include self
     const allowed = [actingUser];
@@ -433,21 +452,25 @@ const handleTaskCreated = (newTask) => {
       // Staff: only self
       return allowed;
     } else if (actingUser.access_level === 1) {
-      // Manager: same team members
-      const teamMembers = users.filter(u => 
+      // Manager: only subordinates (access_level < 1) in same team
+      const subordinates = users.filter(u => 
         u.user_id !== actingUser.user_id && // Exclude self (already added)
-        u.team_id === actingUser.team_id
+        u.team_id === actingUser.team_id &&
+        u.access_level < actingUser.access_level // Only staff (level 0)
       );
-      return [...allowed, ...teamMembers];
+      console.log('👥 Manager - subordinates only:', subordinates.map(u => u.full_name));
+      return [...allowed, ...subordinates];
     } else if (actingUser.access_level === 2) {
       // Director: same department members
       const deptMembers = users.filter(u => 
         u.user_id !== actingUser.user_id && // Exclude self (already added)
         u.department_id === actingUser.department_id
       );
+      console.log('🏢 Director - department members found:', deptMembers.map(u => u.full_name));
       return [...allowed, ...deptMembers];
     } else if (actingUser.access_level === 3) {
       // HR: everyone
+      console.log('👑 HR - can see everyone');
       return users;
     }
     
@@ -455,37 +478,15 @@ const handleTaskCreated = (newTask) => {
     return allowed;
   }, [users, actingUser]);
 
+  // SIMPLIFIED: Auto-set viewUserIds based on access level without dropdown
   useEffect(() => {
     if (!actingUser) return;
     const actingIdStr = String(actingUser.user_id);
-    const allowedIds = new Set(allowedUsers.map((u) => String(u.user_id)));
+    const allowedIds = allowedUsers.map((u) => String(u.user_id));
 
-    // If nothing selected yet, acting user changed, or selection is invalid,
-    // default to "Me" (acting user) when permitted.
-    const prevActingId = prevActingIdRef.current;
-    const selectionHasInvalid = viewUserIds.some((id) => !allowedIds.has(String(id)));
-    if (
-      (prevActingId !== actingIdStr) ||
-      viewUserIds.length === 0 ||
-      selectionHasInvalid
-    ) {
-      prevActingIdRef.current = actingIdStr;
-      if (allowedIds.has(actingIdStr)) {
-        setViewUserIds([actingIdStr]);
-      } else {
-        const pruned = viewUserIds.filter((id) => allowedIds.has(String(id)));
-        if (pruned.length !== viewUserIds.length) setViewUserIds(pruned);
-      }
-      setPage(0);
-      return;
-    }
-
-    // Keep selection pruned to allowed set when allowed users change
-    const pruned = viewUserIds.filter((id) => allowedIds.has(String(id)));
-    if (pruned.length !== viewUserIds.length) {
-      setViewUserIds(pruned);
-      setPage(0);
-    }
+    // Always set to view all allowed users automatically
+    setViewUserIds(allowedIds);
+    setPage(0);
   }, [actingUser, allowedUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
@@ -831,49 +832,7 @@ const handleTaskCreated = (newTask) => {
             </Box>
 
             <Box sx={styles.filtersRow}>
-              {actingUser && actingUser.access_level > 0 && (
-                <FormControl sx={styles.selectMedium}>
-                  <InputLabel id="view-users-label">View tasks of</InputLabel>
-                  <Select
-                    multiple
-                    labelId="view-users-label"
-                    value={viewUserIds}
-                    label="View tasks of"
-                    onChange={(e) =>
-                      setViewUserIds(
-                        Array.isArray(e.target.value) ? e.target.value : []
-                      )
-                    }
-                    renderValue={(selected) => {
-                      const sel = Array.isArray(selected) ? selected : [];
-                      if (!sel.length) return "";
-                      const onlyMe =
-                        actingUser &&
-                        sel.length === 1 &&
-                        String(sel[0]) === String(actingUser.user_id);
-                      if (onlyMe) return "Me";
-                      if (sel.length > 1) return `${sel.length} members`;
-                      const name = usersById.get(Number(sel[0]))?.full_name;
-                      return name || "";
-                    }}
-                  >
-                    {allowedUsers.map((u) => {
-                      const idStr = String(u.user_id);
-                      const checked = viewUserIds.indexOf(idStr) > -1;
-                      const label =
-                        actingUser && String(actingUser.user_id) === idStr
-                          ? "Me"
-                          : `${u.full_name} (${u.role})`;
-                      return (
-                        <MenuItem key={u.user_id} value={idStr}>
-                          <Checkbox checked={checked} />
-                          <ListItemText primary={label} />
-                        </MenuItem>
-                      );
-                    })}
-                  </Select>
-                </FormControl>
-              )}
+              {/* REMOVED: "View tasks of" dropdown - now shows all allowed users automatically */}
             </Box>
 
             {isLoading ? (
