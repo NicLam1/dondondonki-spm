@@ -57,7 +57,7 @@ const supabase = createClient(
 // Normalize any legacy statuses to the canonical set
 function mapLegacyStatus(status) {
   if (status === 'TO_DO' || status === 'IN_PROGRESS') return 'ONGOING';
-  if (status === 'DONE') return 'COMPLETED';
+  if (status === 'DONE' ) return 'COMPLETED';
   return status;
 }
 
@@ -368,11 +368,11 @@ router.get('/projects', async (req, res) => {
       });
       filteredProjects = subordinates;
     } else if (acting.access_level === 2) {
-      // Director: see projects within same department
+      // Director: only subordinates (access_level < 2) in same department
       filteredProjects = (allProjects || []).filter(project => {
         if (project.owner_id === actingUserId) return true; // Own projects
         const owner = project.owner;
-        return owner && owner.department_id === acting.department_id; // Same department
+        return owner && owner.department_id === acting.department_id && owner.access_level < 2; // Same department, subordinates only
       });
     } else if (acting.access_level === 3) {
       // HR: see everything
@@ -620,7 +620,7 @@ router.get('/tasks', async (req, res) => {
 
     console.log('👥 All users loaded:', allUsers.length);
 
-    // OPTION 1: Managers only see subordinates (not peer managers)
+    // FIXED: Managers only see subordinates (not peer managers)
     let allowedTargetIds = new Set([actingUserId]); // Always include self
 
     if (actingData.access_level === 0) {
@@ -629,22 +629,24 @@ router.get('/tasks', async (req, res) => {
       console.log('👤 Staff access - only self');
     } else if (actingData.access_level === 1) {
       // Manager: only subordinates (access_level < 1) in same team
-      const subordinates = (allUsers || []).filter(project => {
-        if (project.owner_id === actingUserId) return true; // Own projects
-        const owner = project.owner;
-        return owner && owner.team_id === acting.team_id && owner.access_level < 1; // Same team, not manager
-      });
+      const subordinates = allUsers.filter(u => 
+        u.team_id === actingData.team_id && 
+        u.team_id !== null &&
+        u.access_level < actingData.access_level // Only staff (level 0)
+      );
       allowedTargetIds = new Set([actingUserId, ...subordinates.map(u => u.user_id)]);
       console.log('👥 Manager access - subordinates only:', subordinates.map(u => u.full_name));
     } else if (actingData.access_level === 2) {
-      // Director: see projects within same department
-      filteredProjects = (allProjects || []).filter(project => {
-        if (project.owner_id === actingUserId) return true; // Own projects
-        const owner = project.owner;
-        return owner && owner.department_id === acting.department_id; // Same department
-      });
+      // Director: only subordinates (access_level < 2) in same department
+      const subordinates = allUsers.filter(u => 
+        u.department_id === actingData.department_id && 
+        u.department_id !== null &&
+        u.access_level < actingData.access_level // Only managers and staff (levels 0,1)
+      );
+      allowedTargetIds = new Set([actingUserId, ...subordinates.map(u => u.user_id)]);
+      console.log('🏢 Director access - subordinates only:', subordinates.map(u => u.full_name));
     } else if (actingData.access_level === 3) {
-      // HR: see everything
+      // HR: everyone
       allowedTargetIds = new Set(allUsers.map(u => u.user_id));
       console.log('👑 HR access - everyone');
     }
@@ -1285,11 +1287,11 @@ router.get('/tasks/deleted', async (req, res) => {
       return owner && owner.team_id === acting.team_id && owner.access_level < 1; // Same team, not manager
     });
   } else if (acting.access_level === 2) {
-    // Director: see tasks from same department
+    // Director: only subordinates (access_level < 2) in same department
     filtered = deletedTasks.filter(task => {
-      if (task.owner_id === actingUserId) return true; // Own projects
+      if (task.owner_id === actingUserId) return true; // Own tasks
       const owner = task.owner;
-      return owner && owner.department_id === acting.department_id; // Same department
+      return owner && owner.department_id === acting.department_id && owner.access_level < 2; // Same department, subordinates only
     });
   } else if (acting.access_level === 3) {
     // HR: see everything

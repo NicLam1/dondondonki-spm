@@ -434,7 +434,7 @@ const handleTaskCreated = (newTask) => {
   }, [users, selectedUserId]);
 
   // KEEP: Team/Department hierarchy logic for frontend user selection
-  // OPTION 1: Managers only see subordinates (not peer managers)
+  // OPTION 1: Directors only see subordinates (not peer directors)
   const allowedUsers = useMemo(() => {
     if (!actingUser || !users.length) return [];
     
@@ -461,13 +461,14 @@ const handleTaskCreated = (newTask) => {
       console.log('👥 Manager - subordinates only:', subordinates.map(u => u.full_name));
       return [...allowed, ...subordinates];
     } else if (actingUser.access_level === 2) {
-      // Director: same department members
-      const deptMembers = users.filter(u => 
+      // Director: only subordinates (access_level < 2) in same department
+      const subordinates = users.filter(u => 
         u.user_id !== actingUser.user_id && // Exclude self (already added)
-        u.department_id === actingUser.department_id
+        u.department_id === actingUser.department_id &&
+        u.access_level < actingUser.access_level // Only managers and staff (levels 0,1)
       );
-      console.log('🏢 Director - department members found:', deptMembers.map(u => u.full_name));
-      return [...allowed, ...deptMembers];
+      console.log('🏢 Director - subordinates only:', subordinates.map(u => u.full_name));
+      return [...allowed, ...subordinates];
     } else if (actingUser.access_level === 3) {
       // HR: everyone
       console.log('👑 HR - can see everyone');

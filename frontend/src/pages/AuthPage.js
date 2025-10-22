@@ -28,6 +28,7 @@ export default function AuthPage({ onAuth }) {
       if (form.role === "STAFF") access_level = 0;
       else if (form.role === "MANAGER") access_level = 1;
       else if (form.role === "DIRECTOR") access_level = 2;
+      else if (form.role === "HR") access_level = 3; // NEW: Add HR mapping
 
       const payload = tab === 1
         ? { ...form, access_level }
@@ -115,6 +116,7 @@ export default function AuthPage({ onAuth }) {
                 <MenuItem value="STAFF">STAFF</MenuItem>
                 <MenuItem value="MANAGER">MANAGER</MenuItem>
                 <MenuItem value="DIRECTOR">DIRECTOR</MenuItem>
+                <MenuItem value="HR">HR</MenuItem>
               </TextField>
             </>
           )}
