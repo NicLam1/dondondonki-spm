@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { env } = require('../config/env');
 const { ActivityTypes } = require('../models/activityLog');
 const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
+const { checkAndSendReminders } = require('../services/reminderService');
 
 const router = Router();
 const multer = require('multer');
@@ -1781,7 +1782,7 @@ router.get('/tasks/:id/activity', async (req, res) => {
   const nameFor = (uid) => {
     if (uid == null) return 'Unassigned';
     const u = usersById[uid];
-    return (u && u.full_name) ? u.full_name : `User ${uid}`;
+       return (u && u.full_name) ? u.full_name : `User ${uid}`;
   };
 
   const serialized = (logs || []).map((row) => {
@@ -3131,60 +3132,16 @@ router.put('/tasks/:id/reminders', async (req, res) => {
   }
 });
 
-// Manual trigger for testing reminders (development only)
+// Manual trigger for testing reminders (development only) - UPDATED
 router.post('/reminders/check', async (req, res) => {
   try {
-    const { data: reminders, error } = await supabase
-      .from('task_reminders')
-      .select(`
-        *,
-        task:tasks(task_id, title, due_date, owner_id, assignee_id, members_id)
-      `)
-      .eq('enabled', true);
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    const results = [];
-    const now = new Date();
-
-    for (const reminder of reminders || []) {
-      const task = reminder.task;
-      if (!task || !task.due_date) continue;
-
-      const dueDate = new Date(task.due_date);
-      const timeDiff = dueDate.getTime() - now.getTime();
-      const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-      // Check if we should send reminders for this task
-      if (daysDiff <= reminder.days_before && daysDiff >= 0) {
-        // Get all users who should receive reminders (owner, assignee, members)
-        const userIds = new Set();
-        if (task.owner_id) userIds.add(task.owner_id);
-        if (task.assignee_id) userIds.add(task.assignee_id);
-        if (Array.isArray(task.members_id)) {
-          task.members_id.forEach(id => userIds.add(id));
-        }
-
-        for (const userId of userIds) {
-          // For testing, just log what would be sent
-          console.log(`📧 Reminder would be sent to user ${userId} for task "${task.title}" (due in ${daysDiff} days)`);
-          results.push({
-            task_id: task.task_id,
-            user_id: userId,
-            task_title: task.title,
-            days_until_due: daysDiff,
-            frequency_per_day: reminder.frequency_per_day
-          });
-        }
-      }
-    }
-
+    console.log('🔔 Manual reminder check triggered');
+    const results = await checkAndSendReminders();
+    
     return res.json({ 
       success: true, 
-      message: `Checked ${reminders?.length || 0} reminder settings`,
-      reminders_to_send: results
+      message: `Processed reminder check - sent ${results.length} notifications`,
+      notifications_sent: results
     });
   } catch (error) {
     console.error('Check reminders error:', error);

@@ -8,6 +8,7 @@ const routes = require('./routes');
 const authRouter = require('./routes/auth');
 const logger = require('./utils/logger');
 const { env } = require('./config/env');
+const { checkAndSendReminders } = require('./services/reminderService');
 
 const app = express();
 
@@ -22,6 +23,24 @@ app.get('/health', (req, res) => {
 
 app.use('/api', routes);
 app.use('/api/auth', authRouter);
+
+// Start reminder checker (every 4 hours in production, every 2 minutes for testing)
+const reminderInterval = process.env.NODE_ENV === 'production' ? 4 * 60 * 60 * 1000 : 2 * 60 * 1000;
+console.log(`🔔 Starting reminder service (checking every ${reminderInterval/1000} seconds)`);
+
+setInterval(async () => {
+  try {
+    await checkAndSendReminders();
+  } catch (error) {
+    console.error('❌ Reminder service error:', error);
+  }
+}, reminderInterval);
+
+// Initial check on startup
+setTimeout(async () => {
+  console.log('🔔 Running initial reminder check...');
+  await checkAndSendReminders();
+}, 5000); // Wait 5 seconds after startup
 
 const port = env.PORT || 4000;
 app.listen(port, () => {
