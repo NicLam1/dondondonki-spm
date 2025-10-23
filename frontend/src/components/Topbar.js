@@ -1,8 +1,8 @@
-import { AppBar, Avatar, Badge, IconButton, InputBase, Paper, Toolbar, Box } from '@mui/material';
-import MailIcon from '@mui/icons-material/Mail';
+import { AppBar, Avatar, InputBase, Paper, Toolbar, Box } from '@mui/material';
 import logo from '../logo.svg';
+import NotificationBell from './NotificationBell';
 
-export default function Topbar() {
+export default function Topbar({ userId }) {
   return (
     <AppBar position="sticky" elevation={0} color="transparent" sx={styles.appBar}>
       <Toolbar sx={styles.topToolbar}>
@@ -10,11 +10,7 @@ export default function Topbar() {
         <Paper sx={styles.searchPaper}>
           <InputBase placeholder="Search…" sx={styles.searchInput} />
         </Paper>
-        <IconButton>
-          <Badge color="primary" variant="dot">
-            <MailIcon />
-          </Badge>
-        </IconButton>
+        {userId && <NotificationBell userId={userId} />}
         <Avatar>ML</Avatar>
       </Toolbar>
     </AppBar>

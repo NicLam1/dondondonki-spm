@@ -3022,6 +3022,7 @@ router.get('/tasks/:id/reminders', async (req, res) => {
 
     // Return default settings if none exist
     const settings = reminder || {
+      task_id: taskId,
       enabled: false,
       days_before: 3,
       frequency_per_day: 1
@@ -3039,6 +3040,8 @@ router.put('/tasks/:id/reminders', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
   const { acting_user_id, enabled, days_before, frequency_per_day } = req.body;
   
+  console.log('📧 Set reminders request:', { taskId, acting_user_id, enabled, days_before, frequency_per_day });
+  
   if (Number.isNaN(taskId)) return res.status(400).json({ error: 'Invalid task id' });
   if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
 
@@ -3046,10 +3049,14 @@ router.put('/tasks/:id/reminders', async (req, res) => {
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be true or false' });
   }
-  if (![1, 3, 7].includes(days_before)) {
+  
+  // Allow any of these values for days_before
+  if (enabled && ![1, 3, 7].includes(days_before)) {
     return res.status(400).json({ error: 'days_before must be 1, 3, or 7' });
   }
-  if (![1, 2, 3].includes(frequency_per_day)) {
+  
+  // Allow any of these values for frequency_per_day
+  if (enabled && ![1, 2, 3].includes(frequency_per_day)) {
     return res.status(400).json({ error: 'frequency_per_day must be 1, 2, or 3' });
   }
 
@@ -3057,13 +3064,18 @@ router.put('/tasks/:id/reminders', async (req, res) => {
     // Get task and verify ownership
     const { data: task, error: taskErr } = await supabase
       .from('tasks')
-      .select('task_id, owner_id, title')
+      .select('task_id, owner_id, title, due_date, assignee_id')
       .eq('task_id', taskId)
       .eq('is_deleted', false)
       .single();
     
     if (taskErr) return res.status(500).json({ error: taskErr.message });
     if (!task) return res.status(404).json({ error: 'Task not found' });
+
+    // Check if task has a due date (required for reminders)
+    if (enabled && !task.due_date) {
+      return res.status(400).json({ error: 'Cannot enable reminders for a task without a due date' });
+    }
 
     // Only task owner can set reminders
     if (task.owner_id !== acting_user_id) {
@@ -3076,20 +3088,41 @@ router.put('/tasks/:id/reminders', async (req, res) => {
       .upsert({
         task_id: taskId,
         enabled,
-        days_before,
-        frequency_per_day,
+        days_before: enabled ? days_before : 3, // Default to 3 if disabled
+        frequency_per_day: enabled ? frequency_per_day : 1, // Default to 1 if disabled
         updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'task_id'
       })
       .select()
       .single();
 
     if (reminderErr) {
+      console.error('❌ Reminder upsert error:', reminderErr);
       return res.status(500).json({ error: reminderErr.message });
     }
 
+    console.log('✅ Reminders updated:', reminder);
+
+    // Log activity
+    try {
+      await recordTaskActivity(supabase, {
+        taskId: taskId,
+        authorId: acting_user_id,
+        type: ActivityTypes.FIELD_EDITED,
+        metadata: { 
+          field: 'reminders', 
+          enabled, 
+          days_before, 
+          frequency_per_day 
+        },
+        summary: `Reminders ${enabled ? 'enabled' : 'disabled'}${enabled ? ` (${days_before} days, ${frequency_per_day}x/day)` : ''}`
+      });
+    } catch (_) {}
+
     return res.json({ 
       success: true, 
-      message: `Reminders ${enabled ? 'enabled' : 'disabled'} for "${task.title}"`,
+      message: `Reminders ${enabled ? 'enabled' : 'disabled'} for "${task.title}"${enabled ? ` - You'll receive ${frequency_per_day} reminder${frequency_per_day > 1 ? 's' : ''} per day starting ${days_before} days before the due date` : ''}`,
       data: reminder 
     });
   } catch (error) {
@@ -3157,6 +3190,39 @@ router.post('/reminders/check', async (req, res) => {
     console.error('Check reminders error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// Get notifications for a user
+router.get('/notifications', async (req, res) => {
+  const userId = parseInt(req.query.user_id, 10);
+  if (Number.isNaN(userId)) return res.status(400).json({ error: 'user_id required' });
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ data });
+});
+
+// Mark notification as read
+router.post('/notifications/:id/read', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { user_id } = req.body;
+  
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid notification id' });
+
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read: true })
+    .eq('id', id)
+    .eq('user_id', user_id);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
 });
 
 module.exports = router;

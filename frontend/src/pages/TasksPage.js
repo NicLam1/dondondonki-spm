@@ -39,6 +39,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import FolderIcon from '@mui/icons-material/Folder';
 import TaskIcon from '@mui/icons-material/Task';
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -50,6 +51,7 @@ import PrioritySelector from '../components/PrioritySelector';
 import TaskForm from '../components/TaskForm';
 import ActivityLog from '../components/ActivityLog';
 import AttachmentManager from '../components/AttachmentManager';
+import ReminderSettings from '../components/ReminderSettings';
 
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
@@ -822,7 +824,7 @@ const handleTaskCreated = (newTask) => {
       />
 
       <Box sx={styles.main}>
-        <Topbar />
+        <Topbar userId={actingUser?.user_id} />
 
         <Box sx={styles.content}>
           <Container maxWidth={false} disableGutters sx={styles.contentContainer}>
@@ -1317,6 +1319,21 @@ const handleTaskCreated = (newTask) => {
               taskId={selectedTask.task_id} 
               actingUserId={actingUser?.user_id} 
             />
+            </Box>
+
+            <Divider sx={styles.dialogDivider} />
+
+            {/* Task Reminders Section */}
+            <Box sx={styles.dialogSection}>
+              <Typography variant="overline" sx={styles.dialogSectionTitle}>
+                Reminders
+              </Typography>
+              <ReminderSettings
+                task={selectedTask}
+                actingUserId={actingUser?.user_id}
+                onSuccess={(message) => setSnackbar({ open: true, message, severity: 'success' })}
+                onError={(error) => setSnackbar({ open: true, message: error, severity: 'error' })}
+              />
             </Box>
 
             </DialogContent>

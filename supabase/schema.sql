@@ -250,3 +250,13 @@ DROP TRIGGER IF EXISTS set_task_reminders_updated_at ON public.task_reminders;
 CREATE TRIGGER set_task_reminders_updated_at
 BEFORE UPDATE ON public.task_reminders
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+--Notification display --
+CREATE TABLE notifications (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(user_id),
+  task_id INTEGER REFERENCES tasks(task_id),
+  message TEXT,
+  read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT NOW()
+);
