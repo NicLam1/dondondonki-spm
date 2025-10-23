@@ -18,12 +18,20 @@ const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4000/api';
 const NotificationBell = ({ userId }) => {
   const [notifications, setNotifications] = useState([]);
   const [anchorEl, setAnchorEl] = useState(null);
+  const [lastFetchTime, setLastFetchTime] = useState(Date.now());
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (userId) {
-      fetchNotifications();
-    }
+    if (!userId) return;
+    
+    // Initial fetch
+    fetchNotifications();
+    
+    // Set up polling every 30 seconds
+    const interval = setInterval(fetchNotifications, 30000);
+    
+    // Cleanup interval on unmount
+    return () => clearInterval(interval);
   }, [userId]);
 
   const fetchNotifications = async () => {
@@ -33,7 +41,17 @@ const NotificationBell = ({ userId }) => {
       });
       if (response.ok) {
         const result = await response.json();
-        setNotifications(result.data || []);
+        const allNotifications = result.data || [];
+        
+        // Keep only unread notifications + any new notifications since last fetch
+        const currentTime = Date.now();
+        const unreadNotifications = allNotifications.filter(n => {
+          // Show if unread OR if it's newer than our last fetch (new notification)
+          return !n.read || new Date(n.created_at).getTime() > lastFetchTime;
+        });
+        
+        setNotifications(unreadNotifications);
+        setLastFetchTime(currentTime);
       }
     } catch (error) {
       console.error('Error fetching notifications:', error);
@@ -50,15 +68,17 @@ const NotificationBell = ({ userId }) => {
 
   const handleNotificationClick = async (notification) => {
     try {
-      // Mark as read first
-      await fetch(`${API_BASE}/notifications/${notification.id}/read`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ user_id: userId })
-      });
+      // Only mark as read if it's unread
+      if (!notification.read) {
+        await fetch(`${API_BASE}/notifications/${notification.id}/read`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ user_id: userId })
+        });
+      }
 
-      // Remove from local state immediately for better UX
+      // Remove from local state immediately
       setNotifications(prev => prev.filter(n => n.id !== notification.id));
 
       // Navigate to task if it has a task_id
@@ -73,6 +93,7 @@ const NotificationBell = ({ userId }) => {
     }
   };
 
+  // Count only truly unread notifications for the badge
   const unreadCount = notifications.filter(n => !n.read).length;
 
   return (
@@ -108,12 +129,14 @@ const NotificationBell = ({ userId }) => {
               key={notification.id}
               onClick={() => handleNotificationClick(notification)}
               sx={{
-                cursor: 'pointer', // Change to pointer cursor
+                cursor: 'pointer',
                 borderBottom: '1px solid #f0f0f0',
                 '&:hover': {
                   backgroundColor: '#f5f5f5'
                 },
-                opacity: notification.read ? 0.6 : 1
+                // Highlight new/unread notifications
+                backgroundColor: !notification.read ? 'rgba(33, 150, 243, 0.08)' : 'transparent',
+                opacity: notification.read ? 0.8 : 1
               }}
             >
               <ListItemText
@@ -127,7 +150,12 @@ const NotificationBell = ({ userId }) => {
                         backgroundColor: notification.read ? 'transparent' : '#2196f3'
                       }}
                     />
-                    <Typography variant="body2">
+                    <Typography 
+                      variant="body2"
+                      sx={{ 
+                        fontWeight: notification.read ? 'normal' : 'bold'
+                      }}
+                    >
                       {notification.message}
                     </Typography>
                   </Stack>
