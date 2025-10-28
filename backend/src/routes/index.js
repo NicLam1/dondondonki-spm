@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { env } = require('../config/env');
 const { ActivityTypes } = require('../models/activityLog');
+const { notifyTaskAssigned, notifyTaskUnassigned, notifyTaskStatusChange } = require('../services/emailNotifications');
 const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
 const { checkAndSendReminders } = require('../services/reminderService');
 
@@ -1045,6 +1046,8 @@ router.post('/tasks', async (req, res) => {
         type: ActivityTypes.REASSIGNED,
         metadata: { from_assignee: null, to_assignee: created.assignee_id },
       });
+      // Email: notify new assignee
+      try { await notifyTaskAssigned(supabase, created, created.assignee_id); } catch (_) {}
     }
   } catch (_) {}
 
@@ -1214,6 +1217,8 @@ router.post('/tasks/:id/subtask', async (req, res) => {
         type: ActivityTypes.REASSIGNED,
         metadata: { from_assignee: null, to_assignee: newSubtask.assignee_id },
       });
+      // Email: notify new subtask assignee
+      try { await notifyTaskAssigned(supabase, newSubtask, newSubtask.assignee_id); } catch (_) {}
     }
   } catch (_) {}
 
@@ -2199,6 +2204,8 @@ router.patch('/tasks/:id/status', async (req, res) => {
         type: ActivityTypes.STATUS_CHANGED,
         metadata: { from_status: task.status, to_status: status },
       });
+      // Email: notify involved users of status change
+      try { await notifyTaskStatusChange(supabase, updated, task.status, status, actingUserId); } catch (_) {}
     }
   } catch (_) {}
 
@@ -2317,6 +2324,15 @@ router.patch('/tasks/:id', async (req, res) => {
         type: ActivityTypes.REASSIGNED,
         metadata: { from_assignee: task.assignee_id, to_assignee: updated.assignee_id },
       });
+      // Email: notify unassigned old assignee and new assignee
+      try {
+        if (task.assignee_id && (!updated.assignee_id || updated.assignee_id !== task.assignee_id)) {
+          await notifyTaskUnassigned(supabase, updated, task.assignee_id);
+        }
+        if (updated.assignee_id && updated.assignee_id !== task.assignee_id) {
+          await notifyTaskAssigned(supabase, updated, updated.assignee_id);
+        }
+      } catch (_) {}
     }
     if (changed('status')) {
       activities.push({
@@ -2325,6 +2341,8 @@ router.patch('/tasks/:id', async (req, res) => {
         type: ActivityTypes.STATUS_CHANGED,
         metadata: { from_status: task.status, to_status: updated.status },
       });
+      // Email: notify involved users of status change
+      try { await notifyTaskStatusChange(supabase, updated, task.status, updated.status, actingUserId); } catch (_) {}
     }
     const FIELD_KEYS = ['title','description','project','priority_bucket','due_date','owner_id','members_id','parent_task_id'];
     for (const key of FIELD_KEYS) {

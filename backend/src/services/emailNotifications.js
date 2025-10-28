@@ -1,0 +1,79 @@
+'use strict';
+
+const { sendMail } = require('./email');
+
+async function getUsersByIds(supabase, userIds) {
+  const uniqueIds = Array.from(new Set((userIds || []).filter((id) => Number.isInteger(id))));
+  if (!uniqueIds.length) return {};
+  const { data, error } = await supabase
+    .from('users')
+    .select('user_id, email, full_name')
+    .in('user_id', uniqueIds);
+  if (error) return {};
+  const map = {};
+  for (const row of data || []) {
+    map[row.user_id] = row;
+  }
+  return map;
+}
+
+async function notifyTaskAssigned(supabase, task, assigneeId) {
+  if (!assigneeId) return;
+  const users = await getUsersByIds(supabase, [assigneeId]);
+  const user = users[assigneeId];
+  if (!user || !user.email) return;
+  const subject = `[Task Assigned] ${task.title}`;
+  const text = `You have been assigned to task "${task.title}". Due: ${task.due_date || 'N/A'}`;
+  const html = `<p>You have been assigned to task <strong>${escapeHtml(task.title)}</strong>.</p><p>Due: ${task.due_date || 'N/A'}</p>`;
+  await sendMail({ to: user.email, subject, text, html });
+}
+
+async function notifyTaskUnassigned(supabase, task, oldAssigneeId) {
+  if (!oldAssigneeId) return;
+  const users = await getUsersByIds(supabase, [oldAssigneeId]);
+  const user = users[oldAssigneeId];
+  if (!user || !user.email) return;
+  const subject = `[Task Unassigned] ${task.title}`;
+  const text = `You have been unassigned from task "${task.title}".`;
+  const html = `<p>You have been unassigned from task <strong>${escapeHtml(task.title)}</strong>.</p>`;
+  await sendMail({ to: user.email, subject, text, html });
+}
+
+async function notifyTaskStatusChange(supabase, task, oldStatus, newStatus, actingUserId) {
+  if (!task) return;
+  const recipientIds = new Set();
+  if (Number.isInteger(task.owner_id)) recipientIds.add(task.owner_id);
+  if (Number.isInteger(task.assignee_id)) recipientIds.add(task.assignee_id);
+  if (Array.isArray(task.members_id)) task.members_id.forEach((id) => Number.isInteger(id) && recipientIds.add(id));
+  if (Number.isInteger(actingUserId)) recipientIds.delete(actingUserId);
+  if (!recipientIds.size) return;
+  const users = await getUsersByIds(supabase, Array.from(recipientIds));
+  const subject = `[Task Status Changed] ${task.title}: ${oldStatus} → ${newStatus}`;
+  const text = `Task "${task.title}" status changed from ${oldStatus} to ${newStatus}. Due: ${task.due_date || 'N/A'}`;
+  const html = `<p>Task <strong>${escapeHtml(task.title)}</strong> status changed: <strong>${escapeHtml(oldStatus)}</strong> → <strong>${escapeHtml(newStatus)}</strong>.</p><p>Due: ${task.due_date || 'N/A'}</p>`;
+  const sends = [];
+  for (const id of Object.keys(users)) {
+    const user = users[id];
+    if (user && user.email) {
+      sends.push(sendMail({ to: user.email, subject, text, html }));
+    }
+  }
+  if (sends.length) await Promise.allSettled(sends);
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+module.exports = {
+  notifyTaskAssigned,
+  notifyTaskUnassigned,
+  notifyTaskStatusChange,
+};
+
+
