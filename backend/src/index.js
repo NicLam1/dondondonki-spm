@@ -9,6 +9,7 @@ const authRouter = require('./routes/auth');
 const logger = require('./utils/logger');
 const { env } = require('./config/env');
 const { checkAndSendReminders } = require('./services/reminderService');
+const { checkAndSendOverdue } = require('./services/overdueService');
 
 const app = express();
 
@@ -41,6 +42,17 @@ setTimeout(async () => {
   console.log('🔔 Running initial reminder check...');
   await checkAndSendReminders();
 }, 5000); // Wait 5 seconds after startup
+
+// Overdue checker: run every minute; only sends when crossing midnight
+const overdueIntervalMs = 60 * 1000;
+console.log(`🚨 Starting overdue service (checking every ${overdueIntervalMs/1000} seconds)`);
+setInterval(async () => {
+  try {
+    await checkAndSendOverdue();
+  } catch (error) {
+    console.error('❌ Overdue service error:', error);
+  }
+}, overdueIntervalMs);
 
 const port = env.PORT || 4000;
 app.listen(port, () => {
