@@ -61,6 +61,25 @@ async function notifyTaskStatusChange(supabase, task, oldStatus, newStatus, acti
   if (sends.length) await Promise.allSettled(sends);
 }
 
+async function notifyCommentMentioned(supabase, task, mentionedUserIds, author) {
+  const uniqueIds = Array.from(new Set((mentionedUserIds || []).filter((id) => Number.isInteger(id))));
+  if (!uniqueIds.length) return;
+  const users = await getUsersByIds(supabase, uniqueIds);
+  const authorName = author?.full_name || 'Someone';
+  const subject = `[Mentioned] ${authorName} mentioned you on ${task.title}`;
+  const preview = (task.comment_preview || '').toString();
+  const text = `${authorName} mentioned you on task "${task.title}". ${preview ? `Comment: ${preview}` : ''}`;
+  const html = `<p><strong>${escapeHtml(authorName)}</strong> mentioned you on task <strong>${escapeHtml(task.title)}</strong>.</p>${preview ? `<p>Comment: ${escapeHtml(preview)}</p>` : ''}`;
+  const sends = [];
+  for (const id of uniqueIds) {
+    const user = users[id];
+    if (user && user.email) {
+      sends.push(sendMail({ to: user.email, subject, text, html }));
+    }
+  }
+  if (sends.length) await Promise.allSettled(sends);
+}
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -74,6 +93,7 @@ module.exports = {
   notifyTaskAssigned,
   notifyTaskUnassigned,
   notifyTaskStatusChange,
+  notifyCommentMentioned,
 };
 
 

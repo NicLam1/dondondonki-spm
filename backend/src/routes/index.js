@@ -2,7 +2,7 @@ const { Router } = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { env } = require('../config/env');
 const { ActivityTypes } = require('../models/activityLog');
-const { notifyTaskAssigned, notifyTaskUnassigned, notifyTaskStatusChange } = require('../services/emailNotifications');
+const { notifyTaskAssigned, notifyTaskUnassigned, notifyTaskStatusChange, notifyCommentMentioned } = require('../services/emailNotifications');
 const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
 const { checkAndSendReminders } = require('../services/reminderService');
 const { checkAndSendOverdue } = require('../services/overdueService');
@@ -1834,6 +1834,9 @@ router.get('/tasks/:id/activity', async (req, res) => {
 router.post('/tasks/:id/comments', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { acting_user_id, comment } = req.body || {};
+  const mentions = Array.isArray(req.body?.mentions)
+    ? Array.from(new Set((req.body.mentions || []).filter((v) => Number.isInteger(v))))
+    : [];
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid task id' });
   if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
   const trimmed = (comment || '').toString().trim();
@@ -1850,7 +1853,7 @@ router.post('/tasks/:id/comments', async (req, res) => {
 
   const { data: acting, error: actingErr } = await supabase
     .from('users')
-    .select('user_id, access_level')
+    .select('user_id, access_level, full_name')
     .eq('user_id', acting_user_id)
     .maybeSingle();
   if (actingErr) return res.status(500).json({ error: actingErr.message });
@@ -1875,10 +1878,30 @@ router.post('/tasks/:id/comments', async (req, res) => {
       taskId: id,
       authorId: acting_user_id,
       type: ActivityTypes.COMMENT_ADDED,
-      metadata: { comment_preview: trimmed.slice(0, 140) },
+      metadata: { comment_preview: trimmed.slice(0, 140), mentions },
       summary: `Comment: ${trimmed.slice(0, 140)}`,
     });
   } catch (_) {}
+
+  // Notify mentioned users (in-app + email)
+  if (mentions.length) {
+    try {
+      // Verify recipients exist
+      const { data: recipients } = await supabase
+        .from('users')
+        .select('user_id')
+        .in('user_id', mentions);
+      const validRecipientIds = Array.from(new Set((recipients || []).map((r) => r.user_id))).filter((uid) => Number.isInteger(uid) && uid !== acting_user_id);
+
+      if (validRecipientIds.length) {
+        const preview = trimmed.slice(0, 140);
+        const message = `${acting.full_name || 'Someone'} mentioned you on "${task.title}": ${preview}`;
+        const inserts = validRecipientIds.map((uid) => ({ user_id: uid, task_id: id, message, read: false }));
+        await supabase.from('notifications').insert(inserts);
+        try { await notifyCommentMentioned(supabase, { ...task, comment_preview: preview }, validRecipientIds, acting); } catch (_) {}
+      }
+    } catch (_) {}
+  }
 
   return res.json({ success: true });
 });
