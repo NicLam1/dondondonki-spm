@@ -260,3 +260,29 @@ CREATE TABLE notifications (
   read BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- User notification preferences
+CREATE TABLE IF NOT EXISTS public.user_notification_prefs (
+  user_id INTEGER PRIMARY KEY REFERENCES public.users(user_id) ON DELETE CASCADE,
+  in_app BOOLEAN NOT NULL DEFAULT TRUE,
+  email BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Trigger to auto-update updated_at on change
+DROP TRIGGER IF EXISTS set_user_notification_prefs_updated_at ON public.user_notification_prefs;
+CREATE TRIGGER set_user_notification_prefs_updated_at
+BEFORE UPDATE ON public.user_notification_prefs
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- Ensure default for email is TRUE in existing environments
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'user_notification_prefs' AND column_name = 'email'
+    ) THEN
+        ALTER TABLE public.user_notification_prefs ALTER COLUMN email SET DEFAULT TRUE;
+    END IF;
+END $$;

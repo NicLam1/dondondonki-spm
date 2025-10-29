@@ -9,10 +9,18 @@ const supabase = createClient(
 const { sendMail } = require('./email');
 async function emailUsers(userIds, subject, text, html) {
   if (!Array.isArray(userIds) || !userIds.length) return;
+  // Fetch email opt-in preferences first
+  const { data: prefs } = await supabase
+    .from('user_notification_prefs')
+    .select('user_id')
+    .in('user_id', userIds)
+    .eq('email', true);
+  const allowed = new Set((prefs || []).map((r) => r.user_id));
+  if (!allowed.size) return;
   const { data: users } = await supabase
     .from('users')
     .select('user_id,email')
-    .in('user_id', userIds);
+    .in('user_id', Array.from(allowed));
   const sends = [];
   for (const u of users || []) {
     if (u.email) sends.push(sendMail({ to: u.email, subject, text, html }));

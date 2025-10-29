@@ -7,6 +7,7 @@ import TrashPage from './pages/TrashPage';
 import ProjectsPage from './pages/ProjectPage';
 import ProjectComp from './components/ProjectComp';
 import CalendarPage from './pages/CalendarPage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         <Route path="/project/:projectName" element={<ProjectComp />} />
         <Route path="/change-password" element={<ChangePassword />} />
         <Route path="/trash" element={<TrashPage />} /> 

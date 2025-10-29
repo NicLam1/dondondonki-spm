@@ -51,7 +51,7 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
         // Profile functionality not yet implemented
         break;
       case 'settings':
-        // Settings functionality not yet implemented
+        navigate('/settings');
         break;
       case 'messages':
         // Messages functionality not yet implemented

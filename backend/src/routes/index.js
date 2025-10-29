@@ -3207,6 +3207,46 @@ router.post('/overdue/check', async (req, res) => {
   }
 });
 
+// User notification preferences: get
+router.get('/notification-prefs', async (req, res) => {
+  const userId = parseInt(req.query.user_id, 10);
+  if (Number.isNaN(userId)) return res.status(400).json({ error: 'user_id required' });
+
+  const { data, error } = await supabase
+    .from('user_notification_prefs')
+    .select('user_id, in_app, email, updated_at, created_at')
+    .eq('user_id', userId)
+    .single();
+
+  if (error && error.code !== 'PGRST116') { // PGRST116 = row not found
+    return res.status(500).json({ error: error.message });
+  }
+
+  if (!data) {
+    // Default preferences if none exist
+    return res.json({ data: { user_id: userId, in_app: true, email: true } });
+  }
+  return res.json({ data });
+});
+
+// User notification preferences: upsert
+router.post('/notification-prefs', async (req, res) => {
+  const { user_id: rawUserId, in_app, email } = req.body || {};
+  const userId = parseInt(rawUserId, 10);
+  if (Number.isNaN(userId)) return res.status(400).json({ error: 'user_id required' });
+  if (typeof in_app !== 'boolean' || typeof email !== 'boolean') {
+    return res.status(400).json({ error: 'in_app and email must be boolean' });
+  }
+
+  const { data, error } = await supabase
+    .from('user_notification_prefs')
+    .upsert({ user_id: userId, in_app, email })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ data });
+});
+
 // Get notifications for a user
 router.get('/notifications', async (req, res) => {
   const userId = parseInt(req.query.user_id, 10);
