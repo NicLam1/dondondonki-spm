@@ -277,8 +277,9 @@ async function checkSpecialDueNotifications(remindersWithTasks) {
         }
       }
 
-      // Overdue - send once on first detection
-      if (daysDiff < 0) {
+      // Overdue - send once on first detection (DISABLED here; handled by overdueService.js)
+      // Enable by setting OVERDUE_EMAIL_FROM_REMINDERS=true
+      if (process.env.OVERDUE_EMAIL_FROM_REMINDERS === 'true' && daysDiff < 0) {
         const reminderNumber = 900; // sentinel for overdue
         for (const uid of recipients) {
           const { data: exist } = await supabase
