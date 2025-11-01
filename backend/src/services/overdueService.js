@@ -80,19 +80,14 @@ async function logOverdue(taskId, userId, dueDate) {
 // Main checker: finds tasks that just became overdue and notifies recipients
 async function checkAndSendOverdue() {
   const now = new Date();
-  // With current schema (due_date is DATE), a task becomes overdue at midnight after its due_date.
-  // Run only when we cross midnight to adhere to "within 1 minute" given date-only precision.
-  if (!crossedMidnightInLastMinute(now)) {
-    return [];
-  }
+  // Instant check: any task with due_date < today is overdue right now
+  const todayISO = toDateISO(now); // yyyy-mm-dd (local)
 
-  const justOverdueDate = dateThatJustBecameOverdue(now); // yyyy-mm-dd
-
-  // Fetch tasks that just became overdue (were due yesterday), are not completed/deleted
+  // Fetch tasks currently overdue (due_date before today), not completed/deleted
   const { data: tasks, error: tasksErr } = await supabase
     .from('tasks')
     .select('task_id, title, status, owner_id, assignee_id, members_id, is_deleted, due_date')
-    .eq('due_date', justOverdueDate)
+    .lt('due_date', todayISO)
     .eq('is_deleted', false)
     .neq('status', 'COMPLETED');
 
@@ -109,15 +104,105 @@ async function checkAndSendOverdue() {
     if (task.assignee_id) recipientIds.add(task.assignee_id);
     if (Array.isArray(task.members_id)) task.members_id.forEach((id) => recipientIds.add(id));
 
-    for (const userId of recipientIds) {
-      // Prevent duplicate overdue notifications for this task/user
-      const alreadyLogged = await hasLoggedOverdue(task.task_id, userId, task.due_date);
-      if (alreadyLogged) continue;
+    const userIdList = Array.from(recipientIds);
+    if (userIdList.length === 0) continue;
 
-      const message = `⚠️ Task "${task.title}" is now OVERDUE.`;
-      await insertInAppNotification(userId, task.task_id, message);
-      await logOverdue(task.task_id, userId, task.due_date);
-      results.push({ task_id: task.task_id, user_id: userId, due_date: task.due_date });
+    // Fetch notification preferences for all recipients
+    let prefsByUser = new Map();
+    try {
+      const { data: prefsData, error: prefsErr } = await supabase
+        .from('user_notification_prefs')
+        .select('user_id, in_app, email')
+        .in('user_id', userIdList);
+      if (prefsErr) {
+        console.warn('⚠️ Could not fetch notification prefs, defaulting to in-app+email:', prefsErr);
+      } else if (Array.isArray(prefsData)) {
+        prefsData.forEach((p) => {
+          prefsByUser.set(p.user_id, { in_app: !!p.in_app, email: !!p.email });
+        });
+      }
+    } catch (e) {
+      console.warn('⚠️ Prefs query failed, defaulting to in-app+email:', e);
+    }
+
+    // Fetch user email addresses for those who prefer email
+    let usersById = new Map();
+    try {
+      const { data: users, error: usersErr } = await supabase
+        .from('users')
+        .select('user_id, email, full_name')
+        .in('user_id', userIdList);
+      if (usersErr) {
+        console.warn('⚠️ Could not fetch user emails for overdue email channel:', usersErr);
+      } else if (Array.isArray(users)) {
+        users.forEach((u) => usersById.set(u.user_id, u));
+      }
+    } catch (e) {
+      console.warn('⚠️ Users query failed for overdue email channel:', e);
+    }
+
+    for (const userId of userIdList) {
+      // Ensure recipient exists to avoid FK violations on notifications/reminder_log
+      const userRecord = usersById.get(userId);
+      if (!userRecord) {
+        continue;
+      }
+      const alreadyLogged = await hasLoggedOverdue(task.task_id, userId, task.due_date);
+
+      const pref = prefsByUser.get(userId) || { in_app: true, email: true };
+      const message = `⚠️ Task "${task.title}" is now OVERDUE (due ${task.due_date}).`;
+
+      let sentAny = false;
+
+      // In-app channel: send if enabled and no similar overdue notification exists yet
+      if (pref.in_app) {
+        try {
+          const { data: existingNotif } = await supabase
+            .from('notifications')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('task_id', task.task_id)
+            .ilike('message', '%OVERDUE%')
+            .ilike('message', `%${task.due_date}%`)
+            .limit(1);
+          const hasInAppAlready = Array.isArray(existingNotif) && existingNotif.length > 0;
+          if (!hasInAppAlready) {
+            await insertInAppNotification(userId, task.task_id, message);
+            sentAny = true;
+          }
+        } catch (e) {
+          console.warn('⚠️ In-app overdue check/insert failed:', e);
+        }
+      }
+
+      // Email channel: only send if not already logged to avoid resending emails repeatedly
+      if (!alreadyLogged && pref.email) {
+        try {
+          const user = usersById.get(userId);
+          if (user && user.email) {
+            const { sendMail } = require('./email');
+            const subject = `Overdue: ${task.title}`;
+            const text = `Your task "${task.title}" is now overdue.\n\nTask ID: ${task.task_id}\nDue Date: ${task.due_date}\n\nPlease take action.`;
+            const html = `<p>Your task <strong>${escapeHtml(task.title)}</strong> is now <strong>overdue</strong>.</p>` +
+                        `<p><strong>Task ID:</strong> ${task.task_id}<br/>` +
+                        `<strong>Due Date:</strong> ${task.due_date}</p>` +
+                        `<p>Please take action.</p>`;
+            await sendMail({ to: user.email, subject, text, html });
+            sentAny = true;
+          }
+        } catch (e) {
+          console.warn(`⚠️ Failed to send overdue email to user ${userId}:`, e);
+        }
+      }
+
+      // Log only if this overdue combo hasn't been logged yet and we sent at least one channel now
+      if (!alreadyLogged && sentAny) {
+        await logOverdue(task.task_id, userId, task.due_date);
+      }
+
+      if (sentAny) {
+        results.push({ task_id: task.task_id, user_id: userId, due_date: task.due_date });
+      }
     }
   }
 
@@ -128,4 +213,14 @@ async function checkAndSendOverdue() {
 }
 
 module.exports = { checkAndSendOverdue };
+
+// Simple HTML escape for email content safety
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
