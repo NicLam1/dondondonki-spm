@@ -43,8 +43,8 @@ setTimeout(async () => {
   await checkAndSendReminders();
 }, 5000); // Wait 5 seconds after startup
 
-// Overdue checker: run every minute; sends instantly for tasks with due_date < today
-const overdueIntervalMs = 60 * 1000;
+// Overdue checker: run every 30 seconds; sends for tasks with due_date < today
+const overdueIntervalMs = 30 * 1000;
 console.log(`🚨 Starting overdue service (checking every ${overdueIntervalMs/1000} seconds)`);
 setInterval(async () => {
   try {

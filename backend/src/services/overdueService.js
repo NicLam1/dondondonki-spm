@@ -154,19 +154,27 @@ async function checkAndSendOverdue() {
 
       let sentAny = false;
 
-      // In-app channel: send if enabled and no similar overdue notification exists yet
+      // In-app channel: first time and then once every 24h while still overdue
       if (pref.in_app) {
         try {
           const { data: existingNotif } = await supabase
             .from('notifications')
-            .select('id')
+            .select('id, created_at')
             .eq('user_id', userId)
             .eq('task_id', task.task_id)
             .ilike('message', '%OVERDUE%')
             .ilike('message', `%${task.due_date}%`)
+            .order('created_at', { ascending: false })
             .limit(1);
-          const hasInAppAlready = Array.isArray(existingNotif) && existingNotif.length > 0;
-          if (!hasInAppAlready) {
+          const nowTs = Date.now();
+          let shouldSendInApp = false;
+          if (!Array.isArray(existingNotif) || existingNotif.length === 0) {
+            shouldSendInApp = true;
+          } else {
+            const lastCreated = new Date(existingNotif[0].created_at).getTime();
+            if (nowTs - lastCreated >= 24 * 60 * 60 * 1000) shouldSendInApp = true;
+          }
+          if (shouldSendInApp) {
             await insertInAppNotification(userId, task.task_id, message);
             sentAny = true;
           }
@@ -181,7 +189,7 @@ async function checkAndSendOverdue() {
           const user = usersById.get(userId);
           if (user && user.email) {
             const { sendMail } = require('./email');
-            const subject = `Overdue: ${task.title}`;
+            const subject = `[Overdue]: ${task.title}`;
             const text = `Your task "${task.title}" is now overdue.\n\nTask ID: ${task.task_id}\nDue Date: ${task.due_date}\n\nPlease take action.`;
             const html = `<p>Your task <strong>${escapeHtml(task.title)}</strong> is now <strong>overdue</strong>.</p>` +
                         `<p><strong>Task ID:</strong> ${task.task_id}<br/>` +
@@ -223,4 +231,3 @@ function escapeHtml(str) {
     .replace(/\"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
-
