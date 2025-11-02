@@ -250,8 +250,16 @@ function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAdd
   // owner/members prepared if you want to display later
   void usersById;
 
-  // Check if task is overdue
-  const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'COMPLETED';
+  // Check if task is overdue (only day after due date counts as overdue)
+  const isOverdue = (() => {
+    if (!task.due_date || task.status === 'COMPLETED') return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const parts = String(task.due_date).split('-').map((n) => Number(n));
+    if (parts.length !== 3 || !parts.every((n) => Number.isFinite(n))) return false;
+    const dueLocal = new Date(parts[0], parts[1] - 1, parts[2]); // local midnight
+    return today > dueLocal;
+  })();
 
   return (
     <Card variant="outlined" sx={{
@@ -435,61 +443,40 @@ const handleTaskCreated = (newTask) => {
     return null;
   }, [users, selectedUserId]);
 
-  // KEEP: Team/Department hierarchy logic for frontend user selection
-  // OPTION 1: Directors only see subordinates (not peer directors)
   const allowedUsers = useMemo(() => {
     if (!actingUser || !users.length) return [];
-    
-    console.log('🔍 allowedUsers calculation:', {
-      actingUser: actingUser.full_name,
-      access_level: actingUser.access_level,
-      team_id: actingUser.team_id,
-      department_id: actingUser.department_id
-    });
-    
     // Always include self
     const allowed = [actingUser];
-    
-    if (actingUser.access_level === 0) {
-      // Staff: only self
-      return allowed;
-    } else if (actingUser.access_level === 1) {
-      // Manager: only subordinates (access_level < 1) in same team
-      const subordinates = users.filter(u => 
-        u.user_id !== actingUser.user_id && // Exclude self (already added)
-        u.team_id === actingUser.team_id &&
-        u.access_level < actingUser.access_level // Only staff (level 0)
-      );
-      console.log('👥 Manager - subordinates only:', subordinates.map(u => u.full_name));
-      return [...allowed, ...subordinates];
-    } else if (actingUser.access_level === 2) {
-      // Director: only subordinates (access_level < 2) in same department
-      const subordinates = users.filter(u => 
-        u.user_id !== actingUser.user_id && // Exclude self (already added)
-        u.department_id === actingUser.department_id &&
-        u.access_level < actingUser.access_level // Only managers and staff (levels 0,1)
-      );
-      console.log('🏢 Director - subordinates only:', subordinates.map(u => u.full_name));
-      return [...allowed, ...subordinates];
-    } else if (actingUser.access_level === 3) {
-      // HR: everyone
-      console.log('👑 HR - can see everyone');
-      return users;
+    // Users can see tasks of those with a LOWER access level than them
+    if (typeof actingUser.access_level === 'number' && actingUser.access_level > 0) {
+      const lowerLevels = users.filter((u) => (
+        u.user_id !== actingUser.user_id &&
+        typeof u.access_level === 'number' &&
+        u.access_level < actingUser.access_level
+      ));
+      return [...allowed, ...lowerLevels];
     }
-    
-    // Fallback: only self
     return allowed;
   }, [users, actingUser]);
 
-  // SIMPLIFIED: Auto-set viewUserIds based on access level without dropdown
+  // Initialize selection: default to the logged-in user; managers can change via dropdown
   useEffect(() => {
     if (!actingUser) return;
     const actingIdStr = String(actingUser.user_id);
-    const allowedIds = allowedUsers.map((u) => String(u.user_id));
-
-    // Always set to view all allowed users automatically
-    setViewUserIds(allowedIds);
-    setPage(0);
+    // If acting user changed or nothing selected, default to self
+    if (prevActingIdRef.current !== actingIdStr || !Array.isArray(viewUserIds) || viewUserIds.length === 0) {
+      setViewUserIds([actingIdStr]);
+      setPage(0);
+    } else {
+      // If some selected users are no longer allowed (e.g., org changes), prune them
+      const allowedIdSet = new Set(allowedUsers.map((u) => String(u.user_id)));
+      const pruned = viewUserIds.filter((id) => allowedIdSet.has(String(id)) || String(id) === actingIdStr);
+      if (pruned.length !== viewUserIds.length) {
+        setViewUserIds(pruned);
+        setPage(0);
+      }
+    }
+    prevActingIdRef.current = actingIdStr;
   }, [actingUser, allowedUsers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const {
@@ -835,7 +822,39 @@ const handleTaskCreated = (newTask) => {
             </Box>
 
             <Box sx={styles.filtersRow}>
-              {/* REMOVED: "View tasks of" dropdown - now shows all allowed users automatically */}
+              {actingUser && actingUser.access_level > 0 && (
+                <FormControl size="small" sx={styles.selectMedium}>
+                  <InputLabel id="view-users-label">View tasks of</InputLabel>
+                  <Select
+                    labelId="view-users-label"
+                    multiple
+                    value={viewUserIds}
+                    label="View tasks of"
+                    onChange={(e) => {
+                      const val = Array.isArray(e.target.value) ? e.target.value : [];
+                      setViewUserIds(val);
+                      setPage(0);
+                    }}
+                    renderValue={(selected) => {
+                      if (!selected || selected.length === 0) return "None selected";
+                      const names = selected
+                        .map((id) => usersById.get(Number(id))?.full_name)
+                        .filter(Boolean);
+                      return names.join(", ");
+                    }}
+                  >
+                    {allowedUsers.map((u) => {
+                      const idStr = String(u.user_id);
+                      return (
+                        <MenuItem key={u.user_id} value={idStr}>
+                          <Checkbox checked={viewUserIds.includes(idStr)} />
+                          <ListItemText primary={`${u.full_name} (${u.role})`} />
+                        </MenuItem>
+                      );
+                    })}
+                  </Select>
+                </FormControl>
+              )}
             </Box>
 
             {isLoading ? (
@@ -1217,7 +1236,14 @@ const handleTaskCreated = (newTask) => {
                               return;
                             }
                             const next = Number(raw);
-                            setDraft((d) => ({ ...d, assignee_id: Number.isInteger(next) ? next : null }));
+                            setDraft((d) => ({
+                              ...d,
+                              assignee_id: Number.isInteger(next) ? next : null,
+                              // Remove assignee from members if present
+                              members_id: Array.isArray(d?.members_id)
+                                ? d.members_id.filter((id) => id !== next)
+                                : []
+                            }));
                           }}
                           renderValue={(val) => {
                             if (val === "" || val == null) return "— None —";
@@ -1263,7 +1289,10 @@ const handleTaskCreated = (newTask) => {
                                 .map((v) => Number(v))
                                 .filter((n) => Number.isInteger(n))
                             ));
-                            setDraft((d) => ({ ...d, members_id: nextUniqueNumbers }));
+                            const ownerId = draft?.owner_id ?? selectedTask.owner_id;
+                            const assigneeId = draft?.assignee_id ?? selectedTask.assignee_id;
+                            const sanitized = nextUniqueNumbers.filter((n) => n !== ownerId && n !== assigneeId);
+                            setDraft((d) => ({ ...d, members_id: sanitized }));
                           }}
                           renderValue={(selected) =>
                             (selected || [])
@@ -1272,7 +1301,13 @@ const handleTaskCreated = (newTask) => {
                               .join(", ") || "—"
                           }
                         >
-                          {Array.from(usersById.values()).map((u) => (
+                          {Array.from(usersById.values())
+                            .filter((u) => {
+                              const ownerId = draft?.owner_id ?? selectedTask.owner_id;
+                              const assigneeId = draft?.assignee_id ?? selectedTask.assignee_id;
+                              return u.user_id !== ownerId && u.user_id !== assigneeId;
+                            })
+                            .map((u) => (
                             <MenuItem key={u.user_id} value={String(u.user_id)}>
                               <Checkbox checked={(draft?.members_id || []).includes(u.user_id)} />
                               <ListItemText primary={`${u.full_name} (${u.role})`} />
@@ -1350,7 +1385,8 @@ const handleTaskCreated = (newTask) => {
                         project: selectedTask.project || "",
                         due_date: selectedTask.due_date ? selectedTask.due_date.slice(0, 10) : "",
                         status: selectedTask.status,
-                        members_id: Array.isArray(selectedTask.members_id) ? selectedTask.members_id : [],
+                        members_id: (Array.isArray(selectedTask.members_id) ? selectedTask.members_id : [])
+                          .filter((id) => id !== selectedTask.owner_id && id !== (selectedTask.assignee_id ?? -1)),
                         owner_id: selectedTask.owner_id,
                             assignee_id: selectedTask.assignee_id ?? null,
                       });
@@ -1386,6 +1422,7 @@ const handleTaskCreated = (newTask) => {
                         // Include members_id ONLY if it actually changed (ignoring order and duplicates)
                         const nextMembers = Array.isArray(draft.members_id)
                           ? Array.from(new Set(draft.members_id))
+                              .filter((id) => id !== draft.owner_id && id !== (draft.assignee_id ?? -1))
                           : [];
                         const currentMembers = Array.isArray(selectedTask.members_id)
                           ? Array.from(new Set(selectedTask.members_id))

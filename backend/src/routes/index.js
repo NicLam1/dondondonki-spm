@@ -2,10 +2,9 @@ const { Router } = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { env } = require('../config/env');
 const { ActivityTypes } = require('../models/activityLog');
-const { notifyTaskAssigned, notifyTaskUnassigned, notifyTaskStatusChange, notifyCommentMentioned } = require('../services/emailNotifications');
+const { notifyTaskAssigned, notifyTaskUnassigned, notifyTaskStatusChange, notifyCommentMentioned, notifyMembersAdded } = require('../services/emailNotifications');
 const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
-const { checkAndSendReminders } = require('../services/reminderService');
-const { checkAndSendOverdue } = require('../services/overdueService');
+const { checkAndSendReminders, checkAndSendOverdueNotifications } = require('../services/reminderService');
 
 const router = Router();
 const multer = require('multer');
@@ -997,6 +996,17 @@ router.post('/tasks', async (req, res) => {
     nextDueDate = calculateNextDueDate(due_date, recurrence_type, recurrence_interval);
   }
 
+  // Validate members: owner and assignee cannot be members
+  const normalizedMembers = Array.isArray(members_id)
+    ? Array.from(new Set(members_id.filter((n) => Number.isInteger(n))))
+    : [];
+  if (normalizedMembers.includes(owner_id)) {
+    return res.status(400).json({ error: 'Owner cannot be a member' });
+  }
+  if (assignee_id != null && normalizedMembers.includes(assignee_id)) {
+    return res.status(400).json({ error: 'Assignee cannot be a member' });
+  }
+
   const insertPayload = {
     title,
     description,
@@ -1007,7 +1017,7 @@ router.post('/tasks', async (req, res) => {
     project_id: finalProjectId, // Use the found or provided project_id
     owner_id,
     assignee_id,
-    members_id,
+    members_id: normalizedMembers,
     parent_task_id,
     // NEW: Recurrence fields
     is_recurring,
@@ -1047,9 +1057,15 @@ router.post('/tasks', async (req, res) => {
         type: ActivityTypes.REASSIGNED,
         metadata: { from_assignee: null, to_assignee: created.assignee_id },
       });
-      // Email: notify new assignee
+      // Notify new assignee (email + in-app)
       try { await notifyTaskAssigned(supabase, created, created.assignee_id); } catch (_) {}
     }
+  } catch (_) {}
+
+  // Notify members added on creation (email + in-app)
+  try {
+    const members = Array.isArray(created.members_id) ? Array.from(new Set(created.members_id.filter((n) => Number.isInteger(n)))) : [];
+    if (members.length) { try { await notifyMembersAdded(supabase, created, members, null); } catch (_) {} }
   } catch (_) {}
 
 
@@ -1179,6 +1195,17 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   }
 
   // Create the subtask
+  // Validate members for subtask: owner and assignee cannot be members
+  const normalizedSubMembers = Array.isArray(members_id)
+    ? Array.from(new Set(members_id.filter((n) => Number.isInteger(n))))
+    : [];
+  if (normalizedSubMembers.includes(owner_id)) {
+    return res.status(400).json({ error: 'Owner cannot be a member' });
+  }
+  if (assignee_id != null && normalizedSubMembers.includes(assignee_id)) {
+    return res.status(400).json({ error: 'Assignee cannot be a member' });
+  }
+
   const { data: newSubtask, error: createErr } = await supabase
     .from('tasks')
     .insert({
@@ -1191,7 +1218,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
       project_id: subtaskProjectId, // Link to project
       owner_id,
       assignee_id,
-      members_id,
+      members_id: normalizedSubMembers,
       parent_task_id: parentTaskId,
       is_deleted: false,
       created_at: new Date().toISOString(),
@@ -1218,9 +1245,15 @@ router.post('/tasks/:id/subtask', async (req, res) => {
         type: ActivityTypes.REASSIGNED,
         metadata: { from_assignee: null, to_assignee: newSubtask.assignee_id },
       });
-      // Email: notify new subtask assignee
+      // Notify new subtask assignee (email + in-app)
       try { await notifyTaskAssigned(supabase, newSubtask, newSubtask.assignee_id); } catch (_) {}
     }
+  } catch (_) {}
+
+  // Notify members added on subtask creation (email + in-app)
+  try {
+    const members = Array.isArray(newSubtask.members_id) ? Array.from(new Set(newSubtask.members_id.filter((n) => Number.isInteger(n)))) : [];
+    if (members.length) { try { await notifyMembersAdded(supabase, newSubtask, members, null); } catch (_) {} }
   } catch (_) {}
 
   return res.json({ 
@@ -1895,9 +1928,6 @@ router.post('/tasks/:id/comments', async (req, res) => {
 
       if (validRecipientIds.length) {
         const preview = trimmed.slice(0, 140);
-        const message = `${acting.full_name || 'Someone'} mentioned you on "${task.title}": ${preview}`;
-        const inserts = validRecipientIds.map((uid) => ({ user_id: uid, task_id: id, message, read: false }));
-        await supabase.from('notifications').insert(inserts);
         try { await notifyCommentMentioned(supabase, { ...task, comment_preview: preview }, validRecipientIds, acting); } catch (_) {}
       }
     } catch (_) {}
@@ -2329,6 +2359,16 @@ router.patch('/tasks/:id', async (req, res) => {
       return res.status(403).json({ error: 'Forbidden: cannot assign owner with equal/higher access' });
     }
   }
+  // Validate that owner/assignee are not listed as members after this edit
+  const nextOwner = Object.prototype.hasOwnProperty.call(patch, 'owner_id') ? patch.owner_id : task.owner_id;
+  const nextMembersRaw = Object.prototype.hasOwnProperty.call(patch, 'members_id') ? patch.members_id : (Array.isArray(task.members_id) ? task.members_id : []);
+  const nextMembers = Array.from(new Set((nextMembersRaw || []).filter((n) => Number.isInteger(n))));
+  if (nextMembers.includes(nextOwner)) {
+    return res.status(400).json({ error: 'Owner cannot be a member' });
+  }
+  if (nextAssignee != null && nextMembers.includes(nextAssignee)) {
+    return res.status(400).json({ error: 'Assignee cannot be a member' });
+  }
   // NEW: two-step update (no returning rows) + read back one
   const { error: updErr } = await supabase.from('tasks').update(patch).eq('task_id', id);
   if (updErr) return res.status(500).json({ error: updErr.message });
@@ -2367,6 +2407,17 @@ router.patch('/tasks/:id', async (req, res) => {
       });
       // Email: notify involved users of status change
       try { await notifyTaskStatusChange(supabase, updated, task.status, updated.status, actingUserId); } catch (_) {}
+      // In-app handled inside notifyTaskStatusChange
+    }
+    // Notify newly added members (email + in-app)
+    if (changed('members_id')) {
+      const fromArr = Array.isArray(task.members_id) ? Array.from(new Set(task.members_id.filter((n) => Number.isInteger(n)))) : [];
+      const toArr = Array.isArray(updated.members_id) ? Array.from(new Set(updated.members_id.filter((n) => Number.isInteger(n)))) : [];
+      const fromSet = new Set(fromArr);
+      const added = toArr.filter((id) => !fromSet.has(id));
+      if (added.length) {
+        try { await notifyMembersAdded(supabase, updated, added, null); } catch (_) {}
+      }
     }
     const FIELD_KEYS = ['title','description','project','priority_bucket','due_date','owner_id','members_id','parent_task_id'];
     for (const key of FIELD_KEYS) {
@@ -3195,7 +3246,7 @@ router.post('/reminders/check', async (req, res) => {
 router.post('/overdue/check', async (req, res) => {
   try {
     console.log('🚨 Manual overdue check triggered');
-    const results = await checkAndSendOverdue();
+    const results = await checkAndSendOverdueNotifications();
     return res.json({
       success: true,
       message: `Processed overdue check - sent ${results.length} notifications`,

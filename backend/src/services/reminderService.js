@@ -60,6 +60,8 @@ async function checkAndSendReminders() {
     console.log(`📋 Found ${reminders?.length || 0} enabled reminders`);
 
     const now = new Date();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const nowUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const results = [];
 
     for (const reminder of reminders || []) {
@@ -90,6 +92,14 @@ async function checkAndSendReminders() {
           remindersToSend.push(i);
         }
 
+        // Resolve in-app opt-in once per task's recipients
+        const recipientIds = Array.from(userIds);
+        const { data: inAppPrefs } = await supabase
+          .from('user_notification_prefs')
+          .select('user_id')
+          .in('user_id', recipientIds)
+          .eq('in_app', true);
+        const inAppAllowed = new Set((inAppPrefs || []).map((r) => r.user_id));
         for (const userId of userIds) {
           for (const reminderNumber of remindersToSend) {
             // Check if we already sent this reminder today
@@ -103,9 +113,11 @@ async function checkAndSendReminders() {
               .single();
 
             if (!existingLog) {
-              // Send notification
+              // Send notifications
               const message = createReminderMessage(task, daysDiff);
-              await sendNotification(userId, task.task_id, message);
+              if (inAppAllowed.has(userId)) {
+                await sendNotification(userId, task.task_id, message);
+              }
               // Also send email
               const subject = `[Task Reminder] ${task.title}`;
               const text = message;
@@ -201,7 +213,8 @@ async function logReminder(taskId, userId, dueDate, reminderNumber, daysBefore) 
 }
 
 module.exports = {
-  checkAndSendReminders
+  checkAndSendReminders,
+  checkAndSendOverdueNotifications
 };
 
 // Additional policy-based notifications independent of task_reminders rows
@@ -231,78 +244,215 @@ async function checkSpecialDueNotifications(remindersWithTasks) {
       if (Array.isArray(task.members_id)) task.members_id.forEach((id) => recipients.add(id));
       if (!recipients.size) continue;
 
+      // Resolve eligible recipients (exist in users); derive channel prefs
+      const recipientIds = Array.from(recipients);
+      const [{ data: prefs }, { data: existingUsers }] = await Promise.all([
+        supabase
+          .from('user_notification_prefs')
+          .select('user_id, in_app, email')
+          .in('user_id', recipientIds),
+        supabase
+          .from('users')
+          .select('user_id')
+          .in('user_id', recipientIds),
+      ]);
+      const existingSet = new Set((existingUsers || []).map((u) => u.user_id));
+      const emailAllowed = new Set((prefs || []).filter((p) => p.email).map((p) => p.user_id));
+      const inAppAllowed = new Set((prefs || []).filter((p) => p.in_app).map((p) => p.user_id));
+      const eligibleEmail = recipientIds.filter((id) => existingSet.has(id) && emailAllowed.has(id));
+      const eligibleInApp = recipientIds.filter((id) => existingSet.has(id) && inAppAllowed.has(id));
+      if (!eligibleEmail.length && !eligibleInApp.length) continue;
+
       // Two days before
       if (daysDiff === 2) {
         const reminderNumber = 102; // sentinel for two-days-before
-        for (const uid of recipients) {
-          const { data: exist } = await supabase
+        const eligibleIds = Array.from(new Set([...eligibleEmail, ...eligibleInApp]));
+        for (const uid of eligibleIds) {
+          // Reserve via upsert to avoid duplicates
+          const { data: reserved, error: reserveError } = await supabase
             .from('reminder_log')
+            .upsert({
+              task_id: task.task_id,
+              user_id: uid,
+              due_date: task.due_date,
+              reminder_number,
+              days_before: 2,
+            }, { onConflict: 'task_id,user_id,due_date,reminder_number', ignoreDuplicates: true })
             .select('log_id')
-            .eq('task_id', task.task_id)
-            .eq('user_id', uid)
-            .eq('due_date', task.due_date)
-            .eq('reminder_number', reminderNumber)
             .maybeSingle();
-          if (!exist) {
-            const subject = `[Task Due Soon] ${task.title} is due in 2 days`;
-            const text = `Task "${task.title}" is due in 2 days (${task.due_date}).`;
-            const html = `<p>Task <strong>${escapeHtml(task.title)}</strong> is due in <strong>2 days</strong> (${task.due_date}).</p>`;
+          if (reserveError || !reserved) continue;
+          const subject = `[Task Due Soon] ${task.title} is due in 2 days`;
+          const text = `Task "${task.title}" is due in 2 days (${task.due_date}).`;
+          const html = `<p>Task <strong>${escapeHtml(task.title)}</strong> is due in <strong>2 days</strong> (${task.due_date}).</p>`;
+          if (emailAllowed.has(uid)) {
             await emailUsers([uid], subject, text, html);
-            await supabase.from('reminder_log').insert({ task_id: task.task_id, user_id: uid, due_date: task.due_date, reminder_number, days_before: 2 });
-            sent.push({ task_id: task.task_id, user_id: uid, kind: 'two_days' });
           }
+          if (inAppAllowed.has(uid)) {
+            await sendNotification(uid, task.task_id, `⚠️ ${task.title} is due in 2 days (${task.due_date}).`);
+          }
+          sent.push({ task_id: task.task_id, user_id: uid, kind: 'two_days' });
         }
       }
 
       // Today due - only if not already configured to avoid double-emails
       if (daysDiff === 0 && !configuredTaskIds.has(task.task_id)) {
         const reminderNumber = 100; // sentinel for due today
-        for (const uid of recipients) {
-          const { data: exist } = await supabase
+        const eligibleIds = Array.from(new Set([...eligibleEmail, ...eligibleInApp]));
+        for (const uid of eligibleIds) {
+          // Reserve via upsert to avoid duplicates (and FK-safe)
+          const { data: reserved, error: reserveError } = await supabase
             .from('reminder_log')
+            .upsert({
+              task_id: task.task_id,
+              user_id: uid,
+              due_date: task.due_date,
+              reminder_number,
+              days_before: 0,
+            }, { onConflict: 'task_id,user_id,due_date,reminder_number', ignoreDuplicates: true })
             .select('log_id')
-            .eq('task_id', task.task_id)
-            .eq('user_id', uid)
-            .eq('due_date', task.due_date)
-            .eq('reminder_number', reminderNumber)
             .maybeSingle();
-          if (!exist) {
-            const subject = `[Task Due Today] ${task.title}`;
-            const text = `Task "${task.title}" is due TODAY (${task.due_date}).`;
-            const html = `<p>Task <strong>${escapeHtml(task.title)}</strong> is due <strong>TODAY</strong> (${task.due_date}).</p>`;
+          if (reserveError || !reserved) continue;
+          const subject = `[Task Due Today] ${task.title}`;
+          const text = `Task "${task.title}" is due TODAY (${task.due_date}).`;
+          const html = `<p>Task <strong>${escapeHtml(task.title)}</strong> is due <strong>TODAY</strong> (${task.due_date}).</p>`;
+          if (emailAllowed.has(uid)) {
             await emailUsers([uid], subject, text, html);
-            await supabase.from('reminder_log').insert({ task_id: task.task_id, user_id: uid, due_date: task.due_date, reminder_number, days_before: 0 });
-            sent.push({ task_id: task.task_id, user_id: uid, kind: 'today' });
           }
+          if (inAppAllowed.has(uid)) {
+            await sendNotification(uid, task.task_id, `⚠️ ${task.title} is due TODAY (${task.due_date}).`);
+          }
+          sent.push({ task_id: task.task_id, user_id: uid, kind: 'today' });
         }
       }
 
-      // Overdue - send once on first detection (DISABLED here; handled by overdueService.js)
-      // Enable by setting OVERDUE_EMAIL_FROM_REMINDERS=true
-      if (process.env.OVERDUE_EMAIL_FROM_REMINDERS === 'true' && daysDiff < 0) {
-        const reminderNumber = 900; // sentinel for overdue
-        for (const uid of recipients) {
-          const { data: exist } = await supabase
-            .from('reminder_log')
-            .select('log_id')
-            .eq('task_id', task.task_id)
-            .eq('user_id', uid)
-            .eq('due_date', task.due_date)
-            .eq('reminder_number', reminderNumber)
-            .maybeSingle();
-          if (!exist) {
-            const subject = `[Task Overdue] ${task.title}`;
-            const text = `Task "${task.title}" is OVERDUE (was due ${task.due_date}).`;
-            const html = `<p>Task <strong>${escapeHtml(task.title)}</strong> is <strong>OVERDUE</strong> (was due ${task.due_date}).</p>`;
-            await emailUsers([uid], subject, text, html);
-            await supabase.from('reminder_log').insert({ task_id: task.task_id, user_id: uid, due_date: task.due_date, reminder_number, days_before: -1 });
-            sent.push({ task_id: task.task_id, user_id: uid, kind: 'overdue' });
-          }
-        }
-      }
+  // Overdue emails removed; handled elsewhere previously
     }
     return sent;
   } catch (_) {
+    return [];
+  }
+}
+
+// Overdue checker: send once per overdue day per involved user
+async function checkAndSendOverdueNotifications() {
+  try {
+    const { data: tasks, error } = await supabase
+      .from('tasks')
+      .select('task_id, title, due_date, status, owner_id, assignee_id, members_id')
+      .not('due_date', 'is', null)
+      .eq('is_deleted', false);
+    if (error) return [];
+
+    const now = new Date();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const nowUtcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const results = [];
+
+    for (const task of tasks || []) {
+      if (task.status === 'COMPLETED') continue;
+      const dueDateUtcMidnight = new Date(`${task.due_date}T00:00:00Z`);
+      const msDiff = nowUtcMidnight.getTime() - dueDateUtcMidnight.getTime();
+      const daysOverdue = Math.floor(msDiff / dayMs);
+      if (daysOverdue < 1) continue; // not overdue until the day after
+
+      const recipients = new Set();
+      if (task.owner_id) recipients.add(task.owner_id);
+      if (task.assignee_id) recipients.add(task.assignee_id);
+      if (Array.isArray(task.members_id)) task.members_id.forEach((id) => recipients.add(id));
+      if (!recipients.size) continue;
+
+      // Resolve recipients: existing users with any channel enabled (in_app or email)
+      const recipientIds = Array.from(recipients);
+      const [{ data: prefs }, { data: existingUsers }] = await Promise.all([
+        supabase
+          .from('user_notification_prefs')
+          .select('user_id, in_app, email')
+          .in('user_id', recipientIds),
+        supabase
+          .from('users')
+          .select('user_id')
+          .in('user_id', recipientIds),
+      ]);
+      const existingSet = new Set((existingUsers || []).map((u) => u.user_id));
+      const inAppAllowed = new Set((prefs || []).filter((p) => p.in_app).map((p) => p.user_id));
+      const emailAllowed = new Set((prefs || []).filter((p) => p.email).map((p) => p.user_id));
+      const canNotify = new Set();
+      for (const id of recipientIds) {
+        if (!existingSet.has(id)) continue;
+        if (inAppAllowed.has(id) || emailAllowed.has(id)) canNotify.add(id);
+      }
+      if (!canNotify.size) continue;
+
+      // Compose message
+      const message = daysOverdue === 1
+        ? `⛔ Task "${task.title}" is OVERDUE by 1 day!`
+        : `⛔ Task "${task.title}" is OVERDUE by ${daysOverdue} days!`;
+
+      // Use sentinel range 200+daysOverdue to tag overdue-day logs
+      const reminderNumber = 200 + daysOverdue;
+
+      for (const uid of Array.from(canNotify)) {
+        // 1) Enforce 24h cooldown across overdue notifications (ignore due_date to be extra safe)
+        const sinceIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        const { data: recentOverdue } = await supabase
+          .from('reminder_log')
+          .select('log_id, sent_at')
+          .eq('task_id', task.task_id)
+          .eq('user_id', uid)
+          .gte('reminder_number', 200)
+          .gte('sent_at', sinceIso)
+          .limit(1)
+          .maybeSingle();
+        if (recentOverdue) continue;
+
+        // 2) Reserve this send by inserting a log first (idempotent, safe for races)
+        const { data: reserved, error: reserveError } = await supabase
+          .from('reminder_log')
+          .upsert({
+            task_id: task.task_id,
+            user_id: uid,
+            due_date: task.due_date,
+            reminder_number: reminderNumber,
+            days_before: -daysOverdue,
+          }, {
+            onConflict: 'task_id,user_id,due_date,reminder_number',
+            ignoreDuplicates: true,
+          })
+          .select('log_id')
+          .maybeSingle();
+        if (reserveError) {
+          console.error('❌ Overdue reserve failed:', reserveError);
+          continue;
+        }
+        if (!reserved) {
+          // Duplicate reservation exists, skip sending
+          continue;
+        }
+
+        // In-app notification
+        if (inAppAllowed.has(uid)) {
+          await sendNotification(uid, task.task_id, message);
+        }
+
+        // Email (respect email prefs via helper)
+        const subject = `[Task Overdue] ${task.title}`;
+        const text = `${message} (Due: ${task.due_date})`;
+        const html = `<p>${escapeHtml(message)} (Due: ${escapeHtml(String(task.due_date))})</p>`;
+        if (emailAllowed.has(uid)) {
+          await emailUsers([uid], subject, text, html);
+        }
+
+        // Reservation row already inserted; treat as send log
+
+        results.push({ task_id: task.task_id, user_id: uid, daysOverdue });
+      }
+    }
+    if (results.length) {
+      console.log(`🚨 Sent ${results.length} overdue notifications`);
+    }
+    return results;
+  } catch (e) {
+    console.error('❌ Error in checkAndSendOverdueNotifications:', e);
     return [];
   }
 }

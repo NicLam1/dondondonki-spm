@@ -29,6 +29,32 @@ async function getEmailOptInSet(supabase, userIds) {
   return new Set((data || []).map((r) => r.user_id));
 }
 
+async function getInAppOptInSet(supabase, userIds) {
+  const uniqueIds = Array.from(new Set((userIds || []).filter((id) => Number.isInteger(id))));
+  if (!uniqueIds.length) return new Set();
+  const { data, error } = await supabase
+    .from('user_notification_prefs')
+    .select('user_id')
+    .in('user_id', uniqueIds)
+    .eq('in_app', true);
+  if (error) return new Set();
+  return new Set((data || []).map((r) => r.user_id));
+}
+
+async function sendInApp(supabase, recipientIds, task, message) {
+  const unique = Array.from(new Set((recipientIds || []).filter((id) => Number.isInteger(id))));
+  if (!unique.length) return;
+  const [optInSet, { data: existingUsers }] = await Promise.all([
+    getInAppOptInSet(supabase, unique),
+    supabase.from('users').select('user_id').in('user_id', unique),
+  ]);
+  const existing = new Set((existingUsers || []).map((u) => u.user_id));
+  const allowed = unique.filter((id) => existing.has(id) && optInSet.has(id));
+  if (!allowed.length) return;
+  const inserts = allowed.map((uid) => ({ user_id: uid, task_id: task?.task_id || null, message, read: false }));
+  await supabase.from('notifications').insert(inserts);
+}
+
 async function notifyTaskAssigned(supabase, task, assigneeId) {
   if (!assigneeId) return;
   const [users, optInSet] = await Promise.all([
@@ -41,6 +67,7 @@ async function notifyTaskAssigned(supabase, task, assigneeId) {
   const text = `You have been assigned to task "${task.title}". Due: ${task.due_date || 'N/A'}`;
   const html = `<p>You have been assigned to task <strong>${escapeHtml(task.title)}</strong>.</p><p>Due: ${task.due_date || 'N/A'}</p>`;
   await sendMail({ to: user.email, subject, text, html });
+  await sendInApp(supabase, [assigneeId], task, `You were assigned to "${task.title}"`);
 }
 
 async function notifyTaskUnassigned(supabase, task, oldAssigneeId) {
@@ -55,6 +82,7 @@ async function notifyTaskUnassigned(supabase, task, oldAssigneeId) {
   const text = `You have been unassigned from task "${task.title}".`;
   const html = `<p>You have been unassigned from task <strong>${escapeHtml(task.title)}</strong>.</p>`;
   await sendMail({ to: user.email, subject, text, html });
+  await sendInApp(supabase, [oldAssigneeId], task, `You were unassigned from "${task.title}"`);
 }
 
 async function notifyTaskStatusChange(supabase, task, oldStatus, newStatus, actingUserId) {
@@ -80,6 +108,7 @@ async function notifyTaskStatusChange(supabase, task, oldStatus, newStatus, acti
     }
   }
   if (sends.length) await Promise.allSettled(sends);
+  await sendInApp(supabase, Array.from(recipientIds), task, `Status changed: ${oldStatus} → ${newStatus} on "${task.title}"`);
 }
 
 async function notifyCommentMentioned(supabase, task, mentionedUserIds, author) {
@@ -102,6 +131,29 @@ async function notifyCommentMentioned(supabase, task, mentionedUserIds, author) 
     }
   }
   if (sends.length) await Promise.allSettled(sends);
+  await sendInApp(supabase, uniqueIds, task, `${authorName} mentioned you on "${task.title}"${preview ? `: ${preview}` : ''}`);
+}
+
+async function notifyMembersAdded(supabase, task, newMemberIds, author) {
+  const uniqueIds = Array.from(new Set((newMemberIds || []).filter((id) => Number.isInteger(id))));
+  if (!uniqueIds.length) return;
+  const [users, optInSet] = await Promise.all([
+    getUsersByIds(supabase, uniqueIds),
+    getEmailOptInSet(supabase, uniqueIds),
+  ]);
+  const authorName = author?.full_name || 'Someone';
+  const subject = `[Added to Task] ${task.title}`;
+  const text = `${authorName} added you as a member to task "${task.title}". Due: ${task.due_date || 'N/A'}`;
+  const html = `<p><strong>${escapeHtml(authorName)}</strong> added you as a member to task <strong>${escapeHtml(task.title)}</strong>.</p><p>Due: ${task.due_date || 'N/A'}</p>`;
+  const sends = [];
+  for (const id of uniqueIds) {
+    const user = users[id];
+    if (user && user.email && optInSet.has(Number(id))) {
+      sends.push(sendMail({ to: user.email, subject, text, html }));
+    }
+  }
+  if (sends.length) await Promise.allSettled(sends);
+  await sendInApp(supabase, uniqueIds, task, `You were added as a member to "${task.title}"`);
 }
 
 function escapeHtml(str) {
@@ -118,6 +170,7 @@ module.exports = {
   notifyTaskUnassigned,
   notifyTaskStatusChange,
   notifyCommentMentioned,
+  notifyMembersAdded,
 };
 
 

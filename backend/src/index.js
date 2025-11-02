@@ -8,8 +8,7 @@ const routes = require('./routes');
 const authRouter = require('./routes/auth');
 const logger = require('./utils/logger');
 const { env } = require('./config/env');
-const { checkAndSendReminders } = require('./services/reminderService');
-const { checkAndSendOverdue } = require('./services/overdueService');
+const { checkAndSendReminders, checkAndSendOverdueNotifications } = require('./services/reminderService');
 
 const app = express();
 
@@ -26,33 +25,48 @@ app.use('/api', routes);
 app.use('/api/auth', authRouter);
 
 // Start reminder checker (every 4 hours in production, every 2 minutes for testing)
-const reminderInterval = process.env.NODE_ENV === 'production' ? 4 * 60 * 60 * 1000 : 2 * 60 * 1000;
-console.log(`🔔 Starting reminder service (checking every ${reminderInterval/1000} seconds)`);
+if (!global.__reminderIntervalStarted) {
+  const reminderInterval = process.env.NODE_ENV === 'production' ? 4 * 60 * 60 * 1000 : 2 * 60 * 1000;
+  console.log(`🔔 Starting reminder service (checking every ${reminderInterval/1000} seconds)`);
 
-setInterval(async () => {
-  try {
+  setInterval(async () => {
+    try {
+      await checkAndSendReminders();
+    } catch (error) {
+      console.error('❌ Reminder service error:', error);
+    }
+  }, reminderInterval);
+
+  // Initial check on startup
+  setTimeout(async () => {
+    console.log('🔔 Running initial reminder check...');
     await checkAndSendReminders();
-  } catch (error) {
-    console.error('❌ Reminder service error:', error);
-  }
-}, reminderInterval);
+  }, 5000); // Wait 5 seconds after startup
+  global.__reminderIntervalStarted = true;
+}
 
-// Initial check on startup
-setTimeout(async () => {
-  console.log('🔔 Running initial reminder check...');
-  await checkAndSendReminders();
-}, 5000); // Wait 5 seconds after startup
+// Overdue checker: every 30 seconds (configurable via OVERDUE_CHECK_INTERVAL_MS)
+if (!global.__overdueIntervalStarted) {
+  const overdueInterval = Number(process.env.OVERDUE_CHECK_INTERVAL_MS || 30000);
+  console.log(`🚨 Starting overdue checker (every ${overdueInterval/1000} seconds)`);
 
-// Overdue checker: run every 30 seconds; sends for tasks with due_date < today
-const overdueIntervalMs = 30 * 1000;
-console.log(`🚨 Starting overdue service (checking every ${overdueIntervalMs/1000} seconds)`);
-setInterval(async () => {
-  try {
-    await checkAndSendOverdue();
-  } catch (error) {
-    console.error('❌ Overdue service error:', error);
-  }
-}, overdueIntervalMs);
+  setInterval(async () => {
+    try {
+      await checkAndSendOverdueNotifications();
+    } catch (error) {
+      console.error('❌ Overdue service error:', error);
+    }
+  }, overdueInterval);
+
+  // Initial overdue check shortly after startup
+  setTimeout(async () => {
+    console.log('🚨 Running initial overdue check...');
+    await checkAndSendOverdueNotifications();
+  }, 8000);
+  global.__overdueIntervalStarted = true;
+}
+
+
 
 const port = env.PORT || 4000;
 app.listen(port, () => {

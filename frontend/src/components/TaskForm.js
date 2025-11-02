@@ -162,11 +162,14 @@ const handleRecurrenceChange = (field, value) => {
 
   const availableMembers = getAvailableMembers();
 
-  // Filter members based on search term
+  // Filter members based on search term and exclude owner/assignee
   const filteredMembers = availableMembers.filter(user =>
-    user.user_id !== formData.owner_id && // Exclude current owner
-    user.full_name.toLowerCase().includes(memberSearchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(memberSearchTerm.toLowerCase())
+    user.user_id !== formData.owner_id &&
+    user.user_id !== formData.assignee_id &&
+    (
+      user.full_name.toLowerCase().includes(memberSearchTerm.toLowerCase()) ||
+      user.email.toLowerCase().includes(memberSearchTerm.toLowerCase())
+    )
   );
 
   // Filter users for owner selection (only for main tasks)
@@ -206,10 +209,14 @@ const handleRecurrenceChange = (field, value) => {
       return;
     }
     const currentMembers = formData.members_id || [];
-    // Prevent selecting the owner as a member
+    // Prevent selecting the owner or assignee as a member
     if (userId === formData.owner_id) {
-        showError('The owner cannot be added as a member');
-        return;
+      showError('The owner cannot be added as a member');
+      return;
+    }
+    if (userId === formData.assignee_id) {
+      showError('The assignee cannot be added as a member');
+      return;
     }
 
     if (!currentMembers.includes(userId)) {
@@ -919,7 +926,12 @@ const handleSubmit = async (e) => {
                     return;
                   }
                   const next = parseInt(raw, 10);
-                  setFormData(prev => ({ ...prev, assignee_id: Number.isInteger(next) ? next : null }));
+                  setFormData(prev => ({
+                    ...prev,
+                    assignee_id: Number.isInteger(next) ? next : null,
+                    // Remove assignee from members if present
+                    members_id: Array.isArray(prev.members_id) ? prev.members_id.filter((id) => id !== next) : []
+                  }));
                 }}
               >
                 <MenuItem value="">
@@ -971,15 +983,16 @@ const handleSubmit = async (e) => {
                   {filteredMembers.slice(0, 10).map(user => (
                     <div
                       key={user.user_id}
-                      className={`search-dropdown-item ${formData.members_id.includes(user.user_id) ? 'selected' : ''} ${user.user_id === formData.owner_id ? 'disabled' : ''}`}
+                      className={`search-dropdown-item ${formData.members_id.includes(user.user_id) ? 'selected' : ''} ${(user.user_id === formData.owner_id || user.user_id === formData.assignee_id) ? 'disabled' : ''}`}
                       onClick={() => {
-                        if (user.user_id !== formData.owner_id) {
+                        if (user.user_id !== formData.owner_id && user.user_id !== formData.assignee_id) {
                           handleMemberSelect(user.user_id);
                         }
                       }}
                     >
                       {user.full_name} ({user.email})
                       {user.user_id === formData.owner_id && <span className="owner-badge">Owner</span>}
+                      {user.user_id === formData.assignee_id && <span className="owner-badge">Assignee</span>}
                       {formData.members_id.includes(user.user_id) && <span className="checkmark">✓</span>}
                     </div>
                   ))}

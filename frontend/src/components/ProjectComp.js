@@ -817,8 +817,15 @@ const ProjectComp = () => {
                 <Typography variant="body1" color="text.secondary">
                   Project Due: {formatDate(projectData.endDate)}
                 </Typography>
-                {/* Add overdue indicator if project is past due */}
-                {new Date(projectData.endDate) < new Date() && (
+                {/* Add overdue indicator if project is past due (only after the due date) */}
+                {(() => {
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  const parts = String(projectData.endDate).split('-').map((n) => Number(n));
+                  if (parts.length !== 3 || !parts.every((n) => Number.isFinite(n))) return false;
+                  const dueLocal = new Date(parts[0], parts[1] - 1, parts[2]);
+                  return today > dueLocal;
+                })() && (
                   <Chip 
                     label="OVERDUE" 
                     size="small" 
@@ -992,8 +999,16 @@ const ProjectComp = () => {
                 </TableHead>
                 <TableBody>
                   {tasks.map((task) => {
-                    // Check if task is overdue
-                    const isOverdue = task.due_date && new Date(task.due_date) < new Date() && task.status !== 'COMPLETED';
+                    // Check if task is overdue (only day after due date counts as overdue)
+                    const isOverdue = (() => {
+                      if (!task.due_date || task.status === 'COMPLETED') return false;
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const parts = String(task.due_date).split('-').map((n) => Number(n));
+                      if (parts.length !== 3 || !parts.every((n) => Number.isFinite(n))) return false;
+                      const dueLocal = new Date(parts[0], parts[1] - 1, parts[2]);
+                      return today > dueLocal;
+                    })();
                     
                     return (
                       <TableRow 
