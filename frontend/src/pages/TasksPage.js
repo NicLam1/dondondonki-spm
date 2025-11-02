@@ -445,18 +445,41 @@ const handleTaskCreated = (newTask) => {
 
   const allowedUsers = useMemo(() => {
     if (!actingUser || !users.length) return [];
-    // Always include self
-    const allowed = [actingUser];
-    // Users can see tasks of those with a LOWER access level than them
-    if (typeof actingUser.access_level === 'number' && actingUser.access_level > 0) {
-      const lowerLevels = users.filter((u) => (
+    const self = [actingUser];
+
+    const level = typeof actingUser.access_level === 'number' ? actingUser.access_level : 0;
+
+    // Mirror backend access rules in /api/tasks
+    // level 0: staff → only self
+    if (level === 0) return self;
+
+    // level 3: HR → everyone
+    if (level === 3) return users;
+
+    // level 1: Manager → only subordinates (level < 1) in same team (non-null)
+    if (level === 1) {
+      const teamId = actingUser.team_id;
+      const subordinates = users.filter((u) => (
         u.user_id !== actingUser.user_id &&
-        typeof u.access_level === 'number' &&
-        u.access_level < actingUser.access_level
+        typeof u.access_level === 'number' && u.access_level < level &&
+        u.team_id != null && teamId != null && u.team_id === teamId
       ));
-      return [...allowed, ...lowerLevels];
+      return [...self, ...subordinates];
     }
-    return allowed;
+
+    // level 2: Director → subordinates (level < 2) in same department (non-null)
+    if (level === 2) {
+      const deptId = actingUser.department_id;
+      const subordinates = users.filter((u) => (
+        u.user_id !== actingUser.user_id &&
+        typeof u.access_level === 'number' && u.access_level < level &&
+        u.department_id != null && deptId != null && u.department_id === deptId
+      ));
+      return [...self, ...subordinates];
+    }
+
+    // Fallback: just self
+    return self;
   }, [users, actingUser]);
 
   // Initialize selection: default to the logged-in user; managers can change via dropdown
