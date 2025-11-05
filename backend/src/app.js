@@ -11,30 +11,7 @@ const { env } = require('./config/env');
 // both a long-running server (local/other hosts) and Vercel serverless.
 const app = express();
 
-// Robust CORS setup with preflight support and credentials
-const rawAllowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean);
-const normalizeOrigin = (o) => (o || '').replace(/\/$/, '');
-const allowedOrigins = rawAllowedOrigins.map(normalizeOrigin);
-const corsOptions = {
-  origin: function(origin, callback) {
-    // Allow same-origin or non-browser requests
-    if (!origin) return callback(null, true);
-    // If no explicit allowlist, allow any origin (useful for dev)
-    if (!allowedOrigins.length) return callback(null, true);
-    const normalized = normalizeOrigin(origin);
-    if (allowedOrigins.includes(normalized)) return callback(null, true);
-    // Disallow by returning false (no CORS headers) instead of throwing
-    return callback(null, false);
-  },
-  credentials: true,
-  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization'],
-  exposedHeaders: ['Content-Length'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204,
-};
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.use(cors({ origin: env.CORS_ORIGIN || '*', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
@@ -58,15 +35,6 @@ app.use(apiBasePath, routes);
 
 // Auth routes under `${base}/auth`
 app.use(`${apiBasePath}/auth`, authRouter);
-
-// Centralized error handler to avoid serverless crashes
-// and ensure a JSON response is returned for unexpected errors
-// eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  if (res.headersSent) return;
-  res.status(500).json({ error: 'Internal server error' });
-});
 
 // Export the app for reuse (Node server or Vercel function)
 module.exports = app;
