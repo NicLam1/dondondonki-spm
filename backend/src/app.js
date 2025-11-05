@@ -12,6 +12,8 @@ const { env } = require('./config/env');
 const app = express();
 
 app.use(cors({ origin: env.CORS_ORIGIN || '*', credentials: true }));
+// Ensure preflight requests get CORS headers
+app.options('*', cors({ origin: env.CORS_ORIGIN || '*', credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
