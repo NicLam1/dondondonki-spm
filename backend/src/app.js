@@ -59,6 +59,15 @@ app.use(apiBasePath, routes);
 // Auth routes under `${base}/auth`
 app.use(`${apiBasePath}/auth`, authRouter);
 
+// Centralized error handler to avoid serverless crashes
+// and ensure a JSON response is returned for unexpected errors
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 // Export the app for reuse (Node server or Vercel function)
 module.exports = app;
 
