@@ -20,6 +20,10 @@ app.use(morgan('dev'));
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
+// Also expose under /api/health for Vercel deployments
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
 // Mount API routes at '/api' by default. This ensures that when the app
 // is served behind Vercel's /api/* function path, the Express routes match
