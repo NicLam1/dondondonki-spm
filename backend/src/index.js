@@ -24,9 +24,9 @@ app.get('/health', (req, res) => {
 app.use('/api', routes);
 app.use('/api/auth', authRouter);
 
-// Start reminder checker (every 4 hours in production, every 2 minutes for testing)
+// Start reminder checker (every 1 hour for testing)
 if (!global.__reminderIntervalStarted) {
-  const reminderInterval = process.env.NODE_ENV === 'production' ? 4 * 60 * 60 * 1000 : 2 * 60 * 1000;
+  const reminderInterval = 60 * 60 * 1000; // 1 hour
   console.log(`🔔 Starting reminder service (checking every ${reminderInterval/1000} seconds)`);
 
   setInterval(async () => {

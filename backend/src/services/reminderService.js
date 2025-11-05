@@ -28,6 +28,34 @@ async function emailUsers(userIds, subject, text, html) {
   if (sends.length) await Promise.allSettled(sends);
 }
 
+// Check if we should send a reminder now based on time windows
+function shouldSendReminderNow(reminderNumber, frequencyPerDay) {
+  const hour = new Date().getHours();
+  
+  if (frequencyPerDay === 1) {
+    // Once per day: 9 AM
+    return reminderNumber === 1 && hour >= 9 && hour < 10;
+  }
+  
+  if (frequencyPerDay === 2) {
+    // Twice per day: 9 AM and 2 PM
+    if (reminderNumber === 1) return hour >= 9 && hour < 10;
+    if (reminderNumber === 2) return hour >= 14 && hour < 15;
+    return false;
+  }
+  
+  if (frequencyPerDay === 3) {
+    // Three times per day: 9 AM, 2 PM, and 7 PM
+    if (reminderNumber === 1) return hour >= 9 && hour < 10;
+    if (reminderNumber === 2) return hour >= 14 && hour < 15;
+    if (reminderNumber === 3) return hour >= 19 && hour < 20;
+    return false;
+  }
+  
+  // Default: allow sending (for frequencies > 3)
+  return true;
+}
+
 // Check and send reminders
 async function checkAndSendReminders() {
   console.log('🔔 Starting reminder check at', new Date().toISOString());
@@ -102,6 +130,12 @@ async function checkAndSendReminders() {
         const inAppAllowed = new Set((inAppPrefs || []).map((r) => r.user_id));
         for (const userId of userIds) {
           for (const reminderNumber of remindersToSend) {
+            // Check if this reminder should be sent at the current time
+            if (!shouldSendReminderNow(reminderNumber, reminder.frequency_per_day)) {
+              console.log(`⏰ Skipping reminder #${reminderNumber} for task "${task.title}" - not the right time window`);
+              continue;
+            }
+
             // Check if we already sent this reminder today
             const { data: existingLog } = await supabase
               .from('reminder_log')
