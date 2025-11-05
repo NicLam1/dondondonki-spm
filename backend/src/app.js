@@ -12,15 +12,19 @@ const { env } = require('./config/env');
 const app = express();
 
 // Robust CORS setup with preflight support and credentials
-const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean);
+const rawAllowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean);
+const normalizeOrigin = (o) => (o || '').replace(/\/$/, '');
+const allowedOrigins = rawAllowedOrigins.map(normalizeOrigin);
 const corsOptions = {
   origin: function(origin, callback) {
     // Allow same-origin or non-browser requests
     if (!origin) return callback(null, true);
     // If no explicit allowlist, allow any origin (useful for dev)
     if (!allowedOrigins.length) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('Not allowed by CORS'));
+    const normalized = normalizeOrigin(origin);
+    if (allowedOrigins.includes(normalized)) return callback(null, true);
+    // Disallow by returning false (no CORS headers) instead of throwing
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
