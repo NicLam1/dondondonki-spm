@@ -31,7 +31,7 @@ describe('services/reminderService', () => {
   });
 
   it('sends reminder notifications to opted-in recipients', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2025-11-01T00:00:00Z'));
+    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 1, 9, 30, 0));
 
     mockSupabase.tables.users.push({
       user_id: 6,
@@ -101,7 +101,7 @@ describe('services/reminderService', () => {
   });
 
   it('skips reminders when already logged for the day', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2025-11-01T00:00:00Z'));
+    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 1, 9, 30, 0));
 
     mockSupabase.tables.users.push({
       user_id: 15,
@@ -158,7 +158,7 @@ describe('services/reminderService', () => {
 
   it('sends overdue notifications to eligible users', async () => {
     const { checkAndSendOverdueNotifications } = reminderService;
-    jest.useFakeTimers().setSystemTime(new Date('2025-11-05T00:00:00Z'));
+    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 5, 9, 30, 0));
 
     mockSupabase.tables.users.push(
       { user_id: 1, email: 'owner@example.com', full_name: 'Owner' },
@@ -201,7 +201,7 @@ describe('services/reminderService', () => {
   });
 
   it('returns empty array when reminder fetch fails', async () => {
-    jest.useFakeTimers().setSystemTime(new Date('2025-11-01T00:00:00Z'));
+    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 1, 9, 30, 0));
 
     mockSupabase.__setNextResult({
       table: 'task_reminders',
