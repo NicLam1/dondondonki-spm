@@ -39,8 +39,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
       try {
         setLoading(true);
         const response = await fetch(
-          `${API_BASE}/tasks/${task.task_id}/reminders?acting_user_id=${actingUserId}`,
-          { credentials: 'include' }
+          `${API_BASE}/tasks/${task.task_id}/reminders?acting_user_id=${actingUserId}`
         );
 
         if (!response.ok) {
@@ -95,7 +94,6 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify({
             acting_user_id: actingUserId,
             enabled,

@@ -36,9 +36,7 @@ const NotificationBell = ({ userId }) => {
 
   const fetchNotifications = async () => {
     try {
-      const response = await fetch(`${API_BASE}/notifications?user_id=${userId}`, {
-        credentials: 'include'
-      });
+      const response = await fetch(`${API_BASE}/notifications?user_id=${userId}`);
       if (response.ok) {
         const result = await response.json();
         const allNotifications = result.data || [];
@@ -73,7 +71,6 @@ const NotificationBell = ({ userId }) => {
         await fetch(`${API_BASE}/notifications/${notification.id}/read`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
           body: JSON.stringify({ user_id: userId })
         });
       }

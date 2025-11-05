@@ -87,7 +87,6 @@ export default function CalendarPage() {
           url.searchParams.set("project_id", projectIdParam);
         }
         const response = await fetch(url.toString(), {
-          credentials: "include",
           signal: controller.signal,
         });
         const json = await response.json().catch(() => ({}));

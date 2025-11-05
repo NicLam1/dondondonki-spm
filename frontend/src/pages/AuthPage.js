@@ -37,8 +37,7 @@ export default function AuthPage({ onAuth }) {
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        credentials: "include",
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok) {

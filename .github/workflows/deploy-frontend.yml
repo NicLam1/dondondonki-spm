@@ -1,0 +1,25 @@
+name: Deploy Frontend via Vercel Hook
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel frontend deploy hook
+        env:
+          VERCEL_DEPLOY_HOOK_URL_FRONTEND: ${{ secrets.VERCEL_DEPLOY_HOOK_URL_FRONTEND }}
+        run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK_URL_FRONTEND" ]; then
+            echo "Missing secret: VERCEL_DEPLOY_HOOK_URL_FRONTEND" >&2
+            exit 1
+          fi
+          curl -sS -X POST "$VERCEL_DEPLOY_HOOK_URL_FRONTEND"
+
+

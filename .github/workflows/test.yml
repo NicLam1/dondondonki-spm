@@ -1,0 +1,37 @@
+# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+
+name: Backend Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  jest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'   # adjust if your project uses a different version
+
+      - name: Install backend deps
+        run: npm install
+        working-directory: backend
+
+      - name: Install testing deps
+        run: npm install
+        working-directory: testing
+
+      - name: Run Jest + coverage
+        run: npm test -- --coverage
+        working-directory: testing
+
+      - name: Upload coverage (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: testing/coverage/lcov-report

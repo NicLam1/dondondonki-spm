@@ -62,7 +62,7 @@ async function fetchJson(path, params) {
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   }
-  const res = await fetch(url.toString(), { credentials: "include" });
+  const res = await fetch(url.toString());
   let json = null;
   try {
     json = await res.json();
@@ -78,7 +78,6 @@ async function apiJson(path, { method = "GET", params, body } = {}) {
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   const res = await fetch(url.toString(), {
     method,
-    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -146,7 +145,6 @@ const STATUS_OPTIONS = ["UNASSIGNED", "ONGOING", "UNDER_REVIEW", "COMPLETED"];
       headers: {
         'Content-Type': 'application/json',
       },
-      credentials: 'include',
       body: JSON.stringify({ status: newStatus }),
     });
 

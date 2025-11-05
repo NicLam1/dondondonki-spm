@@ -23,9 +23,7 @@ const fetchAttachments = async () => {
   try {
     console.log('Fetching attachments for task:', taskId, 'user:', actingUserId);
     
-    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments?acting_user_id=${actingUserId}`, {
-      credentials: 'include'
-    });
+    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments?acting_user_id=${actingUserId}`);
     
     console.log('Response status:', response.status);
     
@@ -54,7 +52,6 @@ const uploadFile = async (file) => {
   try {
     const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments`, {
       method: 'POST',
-      credentials: 'include',
       body: formData
     });
 
@@ -87,9 +84,7 @@ const uploadFile = async (file) => {
 
 const downloadAttachment = async (attachment) => {
   try {
-    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments/${attachment.attachment_id}/download?acting_user_id=${actingUserId}`, {
-      credentials: 'include'
-    });
+    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments/${attachment.attachment_id}/download?acting_user_id=${actingUserId}`);
     const result = await response.json();
     
     if (result.success) {
@@ -106,7 +101,6 @@ const deleteAttachment = async (attachmentId) => {
   try {
     const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments/${attachmentId}`, {
       method: 'DELETE',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ acting_user_id: actingUserId })
     });
