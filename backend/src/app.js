@@ -11,7 +11,26 @@ const { env } = require('./config/env');
 // both a long-running server (local/other hosts) and Vercel serverless.
 const app = express();
 
-app.use(cors({ origin: env.CORS_ORIGIN || '*', credentials: true }));
+// Robust CORS setup with preflight support and credentials
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean);
+const corsOptions = {
+  origin: function(origin, callback) {
+    // Allow same-origin or non-browser requests
+    if (!origin) return callback(null, true);
+    // If no explicit allowlist, allow any origin (useful for dev)
+    if (!allowedOrigins.length) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET','HEAD','PUT','PATCH','POST','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  exposedHeaders: ['Content-Length'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
