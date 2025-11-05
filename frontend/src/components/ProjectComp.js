@@ -120,9 +120,7 @@ const ProjectComp = () => {
       }
      
       // Fetch users for displaying names
-      const usersResponse = await fetch(`${API_BASE}/users`, {
-        credentials: 'include'
-      });
+      const usersResponse = await fetch(`${API_BASE}/users`);
      
       if (usersResponse.ok) {
         const { data: usersData } = await usersResponse.json();
@@ -140,7 +138,6 @@ const ProjectComp = () => {
       // FORCE fresh data with cache busting
       const timestamp = Date.now();
       const projectResponse = await fetch(`${API_BASE}/projects/${projectId}?acting_user_id=${selectedUserId}&_t=${timestamp}`, {
-        credentials: 'include',
         cache: 'no-cache',
         headers: {
           'Cache-Control': 'no-cache',
@@ -346,9 +343,7 @@ const ProjectComp = () => {
     if (!selectedUserId || !projectData) return;
 
     try {
-      const response = await fetch(`${API_BASE}/users`, {
-        credentials: 'include'
-      });
+      const response = await fetch(`${API_BASE}/users`);
 
       if (response.ok) {
         const { data: allUsers } = await response.json();
@@ -384,7 +379,6 @@ const ProjectComp = () => {
       const response = await fetch(`${API_BASE}/projects/${projectData.id}/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           user_id: parseInt(userId, 10),
           acting_user_id: parseInt(selectedUserId, 10)
@@ -434,7 +428,6 @@ const ProjectComp = () => {
       const response = await fetch(`${API_BASE}/projects/${projectData.id}/members/${userId}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           acting_user_id: parseInt(selectedUserId, 10)
         })
@@ -560,7 +553,6 @@ const ProjectComp = () => {
       setEditError('');
       const response = await fetch(`${API_BASE}/projects/${projectData.id}`, {
         method: 'PATCH',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: editName.trim(),
@@ -590,9 +582,7 @@ const ProjectComp = () => {
     if (!selectedUserId || !projectData) return;
 
     try {
-      const response = await fetch(`${API_BASE}/tasks?acting_user_id=${selectedUserId}`, {
-        credentials: 'include'
-      });
+      const response = await fetch(`${API_BASE}/tasks?acting_user_id=${selectedUserId}`);
 
       if (response.ok) {
         const { data: allTasks } = await response.json();
@@ -615,7 +605,6 @@ const ProjectComp = () => {
       const response = await fetch(`${API_BASE}/projects/${projectData.id}/add-task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           task_id: taskId,
           acting_user_id: parseInt(selectedUserId, 10)
@@ -659,7 +648,6 @@ const ProjectComp = () => {
       const response = await fetch(`${API_BASE}/projects/${projectData.id}/remove-task`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({
           task_id: taskId,
           acting_user_id: parseInt(selectedUserId, 10)

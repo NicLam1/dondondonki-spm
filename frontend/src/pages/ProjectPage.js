@@ -78,7 +78,6 @@ const ProjectsPage = () => {
       // Add cache-busting parameter to force fresh data
       const timestamp = Date.now();
       const response = await fetch(`${API_BASE}/projects?acting_user_id=${selectedUserId}&_t=${timestamp}`, {
-        credentials: 'include',
         cache: 'no-cache' // Force fresh request
       });
      
@@ -101,9 +100,7 @@ const ProjectsPage = () => {
           projectsData.map(async (project) => {
             try {
               // Get project details which includes related_tasks via project_id relationship
-              const detailResponse = await fetch(`${API_BASE}/projects/${project.project_id}?acting_user_id=${selectedUserId}`, {
-                credentials: 'include'
-              });
+              const detailResponse = await fetch(`${API_BASE}/projects/${project.project_id}?acting_user_id=${selectedUserId}`);
               
               if (detailResponse.ok) {
                 const { data: projectDetail } = await detailResponse.json();
@@ -304,7 +301,6 @@ const ProjectsPage = () => {
       setCreateLoading(true);
       const response = await fetch(`${API_BASE}/projects`, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,

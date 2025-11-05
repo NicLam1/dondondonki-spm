@@ -43,7 +43,7 @@ export default function SettingsPage() {
       try {
         const url = new URL(`${API_BASE}/notification-prefs`);
         url.searchParams.set("user_id", String(actingUserId));
-        const response = await fetch(url.toString(), { credentials: "include" });
+        const response = await fetch(url.toString());
         const json = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(json?.error || `HTTP ${response.status}`);
         if (!abort && json?.data) {
@@ -65,7 +65,6 @@ export default function SettingsPage() {
     try {
       const response = await fetch(`${API_BASE}/notification-prefs`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: actingUserId, in_app: next.inApp, email: next.email }),
       });

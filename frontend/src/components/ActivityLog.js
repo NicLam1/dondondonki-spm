@@ -9,7 +9,7 @@ async function fetchActivity(taskId, actingUserId, { limit = 100, offset = 0 } =
   url.searchParams.set('acting_user_id', String(actingUserId));
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
-  const res = await fetch(url.toString(), { credentials: 'include' });
+  const res = await fetch(url.toString());
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error || `Failed to load activity`);
   return json?.data || [];
@@ -35,7 +35,7 @@ export default function ActivityLog({ taskId, actingUserId }) {
     let cancelled = false;
     async function loadUsers() {
       try {
-        const res = await fetch(`${API_BASE}/users`, { credentials: 'include' });
+        const res = await fetch(`${API_BASE}/users`);
         const json = await res.json().catch(() => ({}));
         if (!cancelled && res.ok && Array.isArray(json?.data)) setAllUsers(json.data);
       } catch (_) {}

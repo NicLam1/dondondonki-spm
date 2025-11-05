@@ -31,7 +31,6 @@ async function apiJson(path, { method = "GET", params, body } = {}) {
 
   const options = {
     method,
-    credentials: 'include',
     headers: { 'Content-Type': 'application/json' }
   };
 
@@ -575,7 +574,6 @@ const handleSubmit = async (e) => {
 
           const uploadResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/attachments`, {
             method: 'POST',
-            credentials: 'include',
             body: uploadFormData
           });
 
