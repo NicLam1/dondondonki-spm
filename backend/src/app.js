@@ -21,17 +21,16 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Mount API routes with a configurable base path.
-// In traditional server (local/dev), we keep '/api'. On Vercel, we use '/'
-// so that the function deployed at /api forwards subpaths like '/tasks'.
-const apiBasePath = process.env.API_BASE_PATH || (process.env.VERCEL ? '/' : '/api');
+// Mount API routes at '/api' by default. This ensures that when the app
+// is served behind Vercel's /api/* function path, the Express routes match
+// the incoming URLs like '/api/health' and '/api/tasks'.
+const apiBasePath = process.env.API_BASE_PATH || '/api';
 
 // Main routes
 app.use(apiBasePath, routes);
 
-// Auth routes should live under `${base}/auth`
-const authMountPath = apiBasePath === '/' ? '/auth' : `${apiBasePath}/auth`;
-app.use(authMountPath, authRouter);
+// Auth routes under `${base}/auth`
+app.use(`${apiBasePath}/auth`, authRouter);
 
 // Export the app for reuse (Node server or Vercel function)
 module.exports = app;
