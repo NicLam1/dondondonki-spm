@@ -1,0 +1,19 @@
+{
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/reminders/check",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/overdue/check",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
+
+
