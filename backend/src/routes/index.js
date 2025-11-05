@@ -3226,6 +3226,7 @@ router.put('/tasks/:id/reminders', async (req, res) => {
 });
 
 // Manual trigger for testing reminders (development only) - UPDATED
+// Support both POST and GET (Vercel Cron uses GET)
 router.post('/reminders/check', async (req, res) => {
   try {
     console.log('🔔 Manual reminder check triggered');
@@ -3242,10 +3243,41 @@ router.post('/reminders/check', async (req, res) => {
   }
 });
 
+router.get('/reminders/check', async (req, res) => {
+  try {
+    console.log('🔔 Manual reminder check triggered (GET)');
+    const results = await checkAndSendReminders();
+    return res.json({
+      success: true,
+      message: `Processed reminder check - sent ${results.length} notifications`,
+      notifications_sent: results
+    });
+  } catch (error) {
+    console.error('Check reminders error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Manual trigger for overdue notifications (development/testing)
+// Support both POST and GET (Vercel Cron uses GET)
 router.post('/overdue/check', async (req, res) => {
   try {
     console.log('🚨 Manual overdue check triggered');
+    const results = await checkAndSendOverdueNotifications();
+    return res.json({
+      success: true,
+      message: `Processed overdue check - sent ${results.length} notifications`,
+      notifications_sent: results
+    });
+  } catch (error) {
+    console.error('Check overdue error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/overdue/check', async (req, res) => {
+  try {
+    console.log('🚨 Manual overdue check triggered (GET)');
     const results = await checkAndSendOverdueNotifications();
     return res.json({
       success: true,
