@@ -48,6 +48,7 @@ import AddTaskIcon from '@mui/icons-material/AddTask';
 import RemoveIcon from '@mui/icons-material/Remove';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import ExportReportButton from './ExportReportButton';
 
 // Add these imports for sidebar icons
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -88,7 +89,9 @@ const ProjectComp = () => {
   const [availableUsers, setAvailableUsers] = useState([]);
   const navigate = useNavigate();
   const location = useLocation();
-
+  // assume current user id stored in localStorage or context
+  const currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
+  const actingUserId = currentUser?.user_id || null;
 
   // Initialize acting user from localStorage
   useEffect(() => {
@@ -722,6 +725,9 @@ const ProjectComp = () => {
   }
 
 
+  // ensure you DO NOT call projectData as a function — use it as an object
+  const proj = projectData; // safe alias if you prefer
+
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <Sidebar
@@ -787,7 +793,20 @@ const ProjectComp = () => {
                     </Button>
                   </>
                 )}
-                
+
+                {/* Export button inline, matches style */}
+                {proj && (
+                  <ExportReportButton
+                    scope="project"
+                    id={projectData.project_id || projectData.id}
+                    name={projectData.name || projectData.title} // <- pass project name
+                    actingUserId={actingUserId}
+                    label="Export Project"
+                    variant="outlined"
+                    size="small"
+                  />
+                )}
+
                 <Button
                   variant="contained"
                   startIcon={<AddTaskIcon />}

@@ -5,6 +5,7 @@ const { ActivityTypes } = require('../models/activityLog');
 const { notifyTaskAssigned, notifyTaskUnassigned, notifyTaskStatusChange, notifyCommentMentioned, notifyMembersAdded } = require('../services/emailNotifications');
 const { recordTaskActivity, recordMultipleTaskActivities } = require('../services/activityLog');
 const { checkAndSendReminders, checkAndSendOverdueNotifications } = require('../services/reminderService');
+const { generateReportBuffer, sanitizeFilename } = require('../services/reportService');
 
 const router = Router();
 const multer = require('multer');
@@ -1105,7 +1106,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
 
   // Load acting user to check permissions
-  const { data: actingUser, error: actingErr } = await supabase
+  const { data: actingUser, error: actingErr } = await sup
     .from('users')
     .select('user_id, access_level')
     .eq('user_id', acting_user_id)
@@ -3330,5 +3331,128 @@ router.post('/notifications/:id/read', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
+
+
+// Get a single team (returns team_name)
+router.get('/teams/:id', async (req, res) => {
+  const teamId = parseInt(req.params.id, 10);
+  if (Number.isNaN(teamId)) return res.status(400).json({ error: 'Invalid team id' });
+
+  try {
+    const { data: teamRow, error: teamErr } = await supabase
+      .from('teams')
+      .select('team_id, team_name, department_id, created_at')
+      .eq('team_id', teamId)
+      .maybeSingle();
+    if (teamErr) return res.status(500).json({ error: teamErr.message });
+    if (!teamRow) return res.status(404).json({ error: 'Team not found' });
+    return res.json({ data: teamRow });
+  } catch (err) {
+    console.error('Get team error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get a single department (returns department_name)
+router.get('/departments/:id', async (req, res) => {
+  const deptId = parseInt(req.params.id, 10);
+  if (Number.isNaN(deptId)) return res.status(400).json({ error: 'Invalid department id' });
+
+  try {
+    const { data: deptRow, error: deptErr } = await supabase
+      .from('departments')
+      .select('department_id, department_name, created_at')
+      .eq('department_id', deptId)
+      .maybeSingle();
+    if (deptErr) return res.status(500).json({ error: deptErr.message });
+    if (!deptRow) return res.status(404).json({ error: 'Department not found' });
+    return res.json({ data: deptRow });
+  } catch (err) {
+    console.error('Get department error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
+// Reports endpoint (mounted at /api/reports via router.get('/reports', ...))
+// Replace or update the existing router.get('/reports', ...) handler with this (keeps permission checks same)
+router.get('/reports', async (req, res) => {
+  try {
+    const { scope = 'company', id, start: startDate, end: endDate } = req.query;
+    const actingUserId = req.query.acting_user_id ? Number(req.query.acting_user_id) : NaN;
+    if (Number.isNaN(actingUserId)) return res.status(400).json({ error: 'acting_user_id is required' });
+
+    // load acting user
+    const { data: actingUser, error: userErr } = await supabase
+      .from('users')
+      .select('user_id, role, team_id, department_id')
+      .eq('user_id', actingUserId)
+      .maybeSingle();
+    if (userErr) return res.status(500).json({ error: userErr.message });
+    if (!actingUser) return res.status(403).json({ error: 'Invalid acting user' });
+
+    const role = actingUser.role;
+
+    // permission checks (existing logic unchanged)...
+    if (scope === 'company' && role !== 'HR' && role !== 'DIRECTOR') {
+      return res.status(403).json({ error: 'Forbidden: only HR/Directors may run company reports' });
+    }
+    if (scope === 'department' && !(role === 'DIRECTOR' || role === 'HR')) {
+      return res.status(403).json({ error: 'Forbidden: only Directors/HR may run department reports' });
+    }
+    if (scope === 'team' && role === 'STAFF') {
+      return res.status(403).json({ error: 'Forbidden: only managers+ may run team reports' });
+    }
+
+    // Determine filename base. For projects/teams/departments, prefer DB names.
+   // Determine filename base as "<Scope Label> - <Name>" when possible
+    let filenameBase = `${scope}-report${id ? '-' + id : ''}`;
+    if (scope === 'project') {
+      const pid = Number(id);
+      if (Number.isNaN(pid)) return res.status(400).json({ error: 'project id required' });
+      const { data: proj, error: pErr } = await supabase.from('projects').select('project_id, name, owner_id').eq('project_id', pid).maybeSingle();
+      if (pErr) return res.status(500).json({ error: pErr.message });
+      if (!proj) return res.status(404).json({ error: 'Project not found' });
+      const isOwner = proj.owner_id === actingUserId;
+      if (!isOwner && role === 'STAFF') return res.status(403).json({ error: 'Forbidden: staff can only run reports on their projects' });
+      filenameBase = sanitizeFilename(`Project Report - ${proj.name}`) || `project-${proj.project_id}-report`;
+    } else if (scope === 'team') {
+      const teamId = Number(id);
+      if (!Number.isNaN(teamId)) {
+        const { data: teamRow } = await supabase.from('teams').select('team_id, team_name').eq('team_id', teamId).maybeSingle();
+        if (teamRow && teamRow.team_name) filenameBase = sanitizeFilename(`Team Report - ${teamRow.team_name}`) || filenameBase;
+      }
+    } else if (scope === 'department') {
+      const deptId = Number(id);
+      if (!Number.isNaN(deptId)) {
+        const { data: deptRow } = await supabase.from('departments').select('department_id, department_name').eq('department_id', deptId).maybeSingle();
+        if (deptRow && deptRow.department_name) filenameBase = sanitizeFilename(`Department Report - ${deptRow.department_name}`) || filenameBase;
+      }
+    } else if (scope === 'user') {
+      const uid = Number(id);
+      if (!Number.isNaN(uid)) {
+        const { data: usr } = await supabase.from('users').select('user_id, full_name').eq('user_id', uid).maybeSingle();
+        if (usr && usr.full_name) filenameBase = sanitizeFilename(`User Report - ${usr.full_name}`) || filenameBase;
+      }
+    }
+
+    // generate PDF buffer (was missing)
+    const buffer = await generateReportBuffer({
+      supabase,
+      scope,
+      id,
+      startDate,
+      endDate
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.pdf"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Report generation error:', error);
+    return res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
+
 
 module.exports = router;
