@@ -1106,7 +1106,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
 
   // Load acting user to check permissions
-  const { data: actingUser, error: actingErr } = await sup
+  const { data: actingUser, error: actingErr } = await supabase
     .from('users')
     .select('user_id, access_level')
     .eq('user_id', acting_user_id)
