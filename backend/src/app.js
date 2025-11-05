@@ -11,9 +11,10 @@ const { env } = require('./config/env');
 // both a long-running server (local/other hosts) and Vercel serverless.
 const app = express();
 
-app.use(cors({ origin: env.CORS_ORIGIN || '*', credentials: true }));
+// Reflect request origin to satisfy credentialed requests across domains
+app.use(cors({ origin: true, credentials: true }));
 // Ensure preflight requests get CORS headers
-app.options('*', cors({ origin: env.CORS_ORIGIN || '*', credentials: true }));
+app.options('*', cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
