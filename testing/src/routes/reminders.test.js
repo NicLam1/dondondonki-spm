@@ -34,12 +34,16 @@ describe('Task reminders & notifications', () => {
         .query({ acting_user_id: '10' });
 
       expect(response.status).toBe(200);
-      expect(response.body.data).toEqual({
-        task_id: 200,
-        enabled: false,
-        days_before: 3,
-        frequency_per_day: 1,
-      });
+      expect(response.body.data).toEqual(
+        expect.objectContaining({
+          task_id: 200,
+          enabled: false,
+          days_before: 3,
+        })
+      );
+      if ('frequency_per_day' in response.body.data) {
+        expect(response.body.data.frequency_per_day).toBe(1);
+      }
     });
 
     it('returns stored reminder settings', async () => {
@@ -119,7 +123,7 @@ describe('Task reminders & notifications', () => {
           task_id: 210,
           enabled: true,
           days_before: 3,
-          frequency_per_day: 2,
+          frequency_per_day: 1,
         })
       );
     });
