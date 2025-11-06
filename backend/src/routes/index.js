@@ -3119,8 +3119,7 @@ router.get('/tasks/:id/reminders', async (req, res) => {
     const settings = reminder || {
       task_id: taskId,
       enabled: false,
-      days_before: 3,
-      frequency_per_day: 1
+      days_before: 3
     };
 
     return res.json({ success: true, data: settings });
@@ -3133,9 +3132,9 @@ router.get('/tasks/:id/reminders', async (req, res) => {
 // Set reminder settings for a task (only task owner can set)
 router.put('/tasks/:id/reminders', async (req, res) => {
   const taskId = parseInt(req.params.id, 10);
-  const { acting_user_id, enabled, days_before, frequency_per_day } = req.body;
+  const { acting_user_id, enabled, days_before } = req.body;
   
-  console.log('📧 Set reminders request:', { taskId, acting_user_id, enabled, days_before, frequency_per_day });
+  console.log('📧 Set reminders request:', { taskId, acting_user_id, enabled, days_before });
   
   if (Number.isNaN(taskId)) return res.status(400).json({ error: 'Invalid task id' });
   if (!acting_user_id) return res.status(400).json({ error: 'acting_user_id is required' });
@@ -3148,11 +3147,6 @@ router.put('/tasks/:id/reminders', async (req, res) => {
   // Allow any of these values for days_before
   if (enabled && ![1, 3, 7].includes(days_before)) {
     return res.status(400).json({ error: 'days_before must be 1, 3, or 7' });
-  }
-  
-  // Allow any of these values for frequency_per_day
-  if (enabled && ![1, 2, 3].includes(frequency_per_day)) {
-    return res.status(400).json({ error: 'frequency_per_day must be 1, 2, or 3' });
   }
 
   try {
@@ -3184,7 +3178,7 @@ router.put('/tasks/:id/reminders', async (req, res) => {
         task_id: taskId,
         enabled,
         days_before: enabled ? days_before : 3, // Default to 3 if disabled
-        frequency_per_day: enabled ? frequency_per_day : 1, // Default to 1 if disabled
+        frequency_per_day: 1, // Always 1 since we only send once per day now
         updated_at: new Date().toISOString()
       }, {
         onConflict: 'task_id'
@@ -3208,16 +3202,15 @@ router.put('/tasks/:id/reminders', async (req, res) => {
         metadata: { 
           field: 'reminders', 
           enabled, 
-          days_before, 
-          frequency_per_day 
+          days_before
         },
-        summary: `Reminders ${enabled ? 'enabled' : 'disabled'}${enabled ? ` (${days_before} days, ${frequency_per_day}x/day)` : ''}`
+        summary: `Reminders ${enabled ? 'enabled' : 'disabled'}${enabled ? ` (${days_before} days before)` : ''}`
       });
     } catch (_) {}
 
     return res.json({ 
       success: true, 
-      message: `Reminders ${enabled ? 'enabled' : 'disabled'} for "${task.title}"${enabled ? ` - You'll receive ${frequency_per_day} reminder${frequency_per_day > 1 ? 's' : ''} per day starting ${days_before} days before the due date` : ''}`,
+      message: `Reminders ${enabled ? 'enabled' : 'disabled'} for "${task.title}"${enabled ? ` - You'll receive a reminder daily starting ${days_before} days before the due date` : ''}`,
       data: reminder 
     });
   } catch (error) {

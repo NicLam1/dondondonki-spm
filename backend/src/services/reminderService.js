@@ -28,32 +28,11 @@ async function emailUsers(userIds, subject, text, html) {
   if (sends.length) await Promise.allSettled(sends);
 }
 
-// Check if we should send a reminder now based on time windows
-function shouldSendReminderNow(reminderNumber, frequencyPerDay) {
+// Check if we should send a reminder now (9 AM time window only)
+function shouldSendReminderNow() {
   const hour = new Date().getHours();
-  
-  if (frequencyPerDay === 1) {
-    // Once per day: 9 AM
-    return reminderNumber === 1 && hour >= 9 && hour < 10;
-  }
-  
-  if (frequencyPerDay === 2) {
-    // Twice per day: 9 AM and 2 PM
-    if (reminderNumber === 1) return hour >= 9 && hour < 10;
-    if (reminderNumber === 2) return hour >= 14 && hour < 15;
-    return false;
-  }
-  
-  if (frequencyPerDay === 3) {
-    // Three times per day: 9 AM, 2 PM, and 7 PM
-    if (reminderNumber === 1) return hour >= 9 && hour < 10;
-    if (reminderNumber === 2) return hour >= 14 && hour < 15;
-    if (reminderNumber === 3) return hour >= 19 && hour < 20;
-    return false;
-  }
-  
-  // Default: allow sending (for frequencies > 3)
-  return true;
+  // Send reminders between 9 AM and 10 AM
+  return hour >= 9 && hour < 10;
 }
 
 // Check and send reminders
@@ -114,10 +93,10 @@ async function checkAndSendReminders() {
           task.members_id.forEach(id => userIds.add(id));
         }
 
-        // Calculate how many reminders to send today based on frequency
-        const remindersToSend = [];
-        for (let i = 1; i <= reminder.frequency_per_day; i++) {
-          remindersToSend.push(i);
+        // Check if this reminder should be sent at the current time (9 AM only)
+        if (!shouldSendReminderNow()) {
+          console.log(`⏰ Skipping reminder for task "${task.title}" - not the right time window (need 9-10 AM)`);
+          continue;
         }
 
         // Resolve in-app opt-in once per task's recipients
@@ -128,46 +107,39 @@ async function checkAndSendReminders() {
           .in('user_id', recipientIds)
           .eq('in_app', true);
         const inAppAllowed = new Set((inAppPrefs || []).map((r) => r.user_id));
+        
         for (const userId of userIds) {
-          for (const reminderNumber of remindersToSend) {
-            // Check if this reminder should be sent at the current time
-            if (!shouldSendReminderNow(reminderNumber, reminder.frequency_per_day)) {
-              console.log(`⏰ Skipping reminder #${reminderNumber} for task "${task.title}" - not the right time window`);
-              continue;
-            }
+          // Check if we already sent a reminder today for this task/user/due_date
+          const { data: existingLog } = await supabase
+            .from('reminder_log')
+            .select('log_id')
+            .eq('task_id', task.task_id)
+            .eq('user_id', userId)
+            .eq('due_date', task.due_date)
+            .eq('reminder_number', 1) // Always use reminder_number 1 for single daily reminder
+            .single();
 
-            // Check if we already sent this reminder today
-            const { data: existingLog } = await supabase
-              .from('reminder_log')
-              .select('log_id')
-              .eq('task_id', task.task_id)
-              .eq('user_id', userId)
-              .eq('due_date', task.due_date)
-              .eq('reminder_number', reminderNumber)
-              .single();
-
-            if (!existingLog) {
-              // Send notifications
-              const message = createReminderMessage(task, daysDiff);
-              if (inAppAllowed.has(userId)) {
-                await sendNotification(userId, task.task_id, message);
-              }
-              // Also send email
-              const subject = `[Task Reminder] ${task.title}`;
-              const text = message;
-              const html = `<p>${escapeHtml(message)}</p>`;
-              await emailUsers([userId], subject, text, html);
-              
-              // Log that we sent this reminder
-              await logReminder(task.task_id, userId, task.due_date, reminderNumber, daysDiff);
-              
-              results.push({
-                task_id: task.task_id,
-                user_id: userId,
-                reminder_number: reminderNumber,
-                days_until_due: daysDiff
-              });
+          if (!existingLog) {
+            // Send notifications
+            const message = createReminderMessage(task, daysDiff);
+            if (inAppAllowed.has(userId)) {
+              await sendNotification(userId, task.task_id, message);
             }
+            // Also send email
+            const subject = `[Task Reminder] ${task.title}`;
+            const text = message;
+            const html = `<p>${escapeHtml(message)}</p>`;
+            await emailUsers([userId], subject, text, html);
+            
+            // Log that we sent this reminder (always use reminder_number 1)
+            await logReminder(task.task_id, userId, task.due_date, 1, daysDiff);
+            
+            results.push({
+              task_id: task.task_id,
+              user_id: userId,
+              reminder_number: 1,
+              days_until_due: daysDiff
+            });
           }
         }
       }

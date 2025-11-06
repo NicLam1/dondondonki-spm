@@ -25,7 +25,6 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
   const [saving, setSaving] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [daysBefore, setDaysBefore] = useState(3);
-  const [frequencyPerDay, setFrequencyPerDay] = useState(1);
   const [hasChanges, setHasChanges] = useState(false);
   const [originalSettings, setOriginalSettings] = useState(null);
 
@@ -51,12 +50,10 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
 
         setEnabled(settings.enabled || false);
         setDaysBefore(settings.days_before || 3);
-        setFrequencyPerDay(settings.frequency_per_day || 1);
         
         setOriginalSettings({
           enabled: settings.enabled || false,
-          days_before: settings.days_before || 3,
-          frequency_per_day: settings.frequency_per_day || 1
+          days_before: settings.days_before || 3
         });
 
         setHasChanges(false);
@@ -77,11 +74,10 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
     
     const changed = 
       enabled !== originalSettings.enabled ||
-      daysBefore !== originalSettings.days_before ||
-      frequencyPerDay !== originalSettings.frequency_per_day;
+      daysBefore !== originalSettings.days_before;
     
     setHasChanges(changed);
-  }, [enabled, daysBefore, frequencyPerDay, originalSettings]);
+  }, [enabled, daysBefore, originalSettings]);
 
   const handleSave = async () => {
     if (!hasChanges) return;
@@ -97,8 +93,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
           body: JSON.stringify({
             acting_user_id: actingUserId,
             enabled,
-            days_before: daysBefore,
-            frequency_per_day: frequencyPerDay
+            days_before: daysBefore
           })
         }
       );
@@ -113,8 +108,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
       // Update original settings to match current
       setOriginalSettings({
         enabled,
-        days_before: daysBefore,
-        frequency_per_day: frequencyPerDay
+        days_before: daysBefore
       });
       
       setHasChanges(false);
@@ -136,13 +130,6 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
     if (days === 3) return '3 days before';
     if (days === 7) return '7 days before';
     return `${days} days before`;
-  };
-
-  const getFrequencyLabel = (freq) => {
-    if (freq === 1) return 'Once per day';
-    if (freq === 2) return 'Twice per day';
-    if (freq === 3) return 'Three times per day';
-    return `${freq} times per day`;
   };
 
   if (loading) {
@@ -169,7 +156,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
         {enabled && (
           <Box sx={{ mt: 1 }}>
             <Typography variant="caption" display="block">
-              Current settings: {getDaysBeforeLabel(daysBefore)}, {getFrequencyLabel(frequencyPerDay)}
+              Current settings: {getDaysBeforeLabel(daysBefore)}
             </Typography>
           </Box>
         )}
@@ -214,7 +201,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
                 <Box>
                   <Typography variant="body2">1 Day Before</Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Reminders start 1 day before due date
+                    Reminder sent 1 day before due date
                   </Typography>
                 </Box>
               </MenuItem>
@@ -222,7 +209,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
                 <Box>
                   <Typography variant="body2">3 Days Before</Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Reminders start 3 days before due date
+                    Reminder sent 3 days before due date
                   </Typography>
                 </Box>
               </MenuItem>
@@ -230,43 +217,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
                 <Box>
                   <Typography variant="body2">7 Days Before</Typography>
                   <Typography variant="caption" color="text.secondary">
-                    Reminders start 7 days before due date
-                  </Typography>
-                </Box>
-              </MenuItem>
-            </Select>
-          </FormControl>
-
-          {/* Frequency Selection */}
-          <FormControl fullWidth size="small">
-            <InputLabel id="frequency-label">Reminder Frequency</InputLabel>
-            <Select
-              labelId="frequency-label"
-              value={frequencyPerDay}
-              label="Reminder Frequency"
-              onChange={(e) => setFrequencyPerDay(e.target.value)}
-            >
-              <MenuItem value={1}>
-                <Box>
-                  <Typography variant="body2">Once per day</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    One reminder every day
-                  </Typography>
-                </Box>
-              </MenuItem>
-              <MenuItem value={2}>
-                <Box>
-                  <Typography variant="body2">Twice per day</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Morning and evening reminders
-                  </Typography>
-                </Box>
-              </MenuItem>
-              <MenuItem value={3}>
-                <Box>
-                  <Typography variant="body2">Three times per day</Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Morning, afternoon, and evening
+                    Reminder sent 7 days before due date
                   </Typography>
                 </Box>
               </MenuItem>
@@ -276,8 +227,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
           {/* Info box */}
           <Alert severity="info" icon={<InfoOutlinedIcon />} sx={{ fontSize: '0.85rem' }}>
             <Typography variant="caption" display="block">
-              You'll receive <strong>{frequencyPerDay} reminder{frequencyPerDay > 1 ? 's' : ''}</strong> per day 
-              starting <strong>{daysBefore} day{daysBefore > 1 ? 's' : ''}</strong> before the task is due.
+              You'll receive <strong>one reminder per day</strong> starting <strong>{daysBefore} day{daysBefore > 1 ? 's' : ''}</strong> before the task is due.
             </Typography>
             {task.due_date && (
               <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
