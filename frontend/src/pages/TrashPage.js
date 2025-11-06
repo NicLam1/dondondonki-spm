@@ -1,5 +1,5 @@
 import "../App.css";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Box,
   Container,
@@ -9,11 +9,7 @@ import {
   CardContent,
   Button,
   Stack,
-  Chip,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem
+  Chip
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RestoreIcon from '@mui/icons-material/Restore';
@@ -59,31 +55,24 @@ function PriorityChip({ value }) {
 }
 
 export default function TrashPage() {
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-
-  // Get users for dropdown (same as TasksPage)
-  const { data: usersData } = useQuery({
-    queryKey: ["users"],
-    queryFn: () => fetchJson("/users"),
-  });
-
-  const users = usersData?.data || [];
-
-  // Auto-select first user
-  useEffect(() => {
-    if (users.length && !selectedUserId) {
-      setSelectedUserId(String(users[0].user_id));
+  const [actingUserId] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('currentUser') || localStorage.getItem('user') || 'null');
+      const id = stored?.user_id || stored?.profile?.user_id || null;
+      return id ? String(id) : "";
+    } catch {
+      return "";
     }
-  }, [users, selectedUserId]);
+  });
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Simple call to backend - backend handles ALL authority logic
   const { data: deletedTasksData, isLoading } = useQuery({
-    queryKey: ["deleted-tasks", selectedUserId],
+    queryKey: ["deleted-tasks", actingUserId],
     queryFn: () => fetchJson("/tasks/deleted", {
-      acting_user_id: selectedUserId,
+      acting_user_id: actingUserId,
     }),
-    enabled: Boolean(selectedUserId),
+    enabled: Boolean(actingUserId),
   });
 
   const deletedTasks = deletedTasksData?.data || [];
@@ -93,7 +82,7 @@ export default function TrashPage() {
       const response = await fetch(`${API_BASE}/tasks/${task.task_id}/restore`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ acting_user_id: parseInt(selectedUserId) })
+        body: JSON.stringify({ acting_user_id: parseInt(actingUserId) })
       });
 
       if (!response.ok) {
@@ -140,23 +129,6 @@ export default function TrashPage() {
               </Typography>
             </Box>
 
-            {/* User Selection Dropdown */}
-            <Box sx={{ mb: 3, display: "flex", gap: 2, flexWrap: "wrap" }}>
-              <FormControl sx={{ width: 280 }}>
-                <InputLabel>Acting user</InputLabel>
-                <Select
-                  value={selectedUserId}
-                  label="Acting user"
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                >
-                  {users.map((u) => (
-                    <MenuItem key={u.user_id} value={String(u.user_id)}>
-                      {u.full_name} ({u.role})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Box>
 
             {/* Deleted Tasks Display */}
             {isLoading ? (

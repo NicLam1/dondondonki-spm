@@ -20,7 +20,14 @@ app.use((req, res, next) => {
   }
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  const reqAllowedHeaders = req.headers['access-control-request-headers'];
+  if (reqAllowedHeaders) {
+    // Reflect requested headers for preflight
+    res.setHeader('Access-Control-Allow-Headers', reqAllowedHeaders);
+    res.setHeader('Vary', 'Origin, Access-Control-Request-Headers');
+  } else {
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cache-Control, Pragma, Accept, Origin');
+  }
   if (req.method === 'OPTIONS') {
     return res.status(204).end();
   }

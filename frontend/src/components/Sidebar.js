@@ -1,11 +1,25 @@
 import { useNavigate } from 'react-router-dom';
-import { Avatar, Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Button } from '@mui/material';
+import { Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Button } from '@mui/material';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuIcon from '@mui/icons-material/Menu';
+import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined';
+import AssignmentTurnedInOutlinedIcon from '@mui/icons-material/AssignmentTurnedInOutlined';
+import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined';
+import FolderOutlinedIcon from '@mui/icons-material/FolderOutlined';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 const SIDEBAR_WIDTH = 240;
 const SIDEBAR_MINI_WIDTH = 80;
 
-export default function Sidebar({ open = true, onToggle, items = [], title = 'DonkiBoard', onItemClick }) {
+const DEFAULT_SIDEBAR_ITEMS = [
+  { key: 'dashboard', label: 'Dashboard', icon: <DashboardOutlinedIcon /> },
+  { key: 'calendar', label: 'Calendar', icon: <CalendarMonthOutlinedIcon /> },
+  { key: 'projects', label: 'Projects', icon: <FolderOutlinedIcon /> },
+  { key: 'settings', label: 'Settings', icon: <SettingsOutlinedIcon /> },
+  { key: 'trash', label: 'Trash', icon: <DeleteOutlineIcon /> },
+];
+
+export default function Sidebar({ open = true, onToggle, title = 'DonkiBoard', onItemClick }) {
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const email = user.email || '';
@@ -18,6 +32,8 @@ export default function Sidebar({ open = true, onToggle, items = [], title = 'Do
   } else {
     role = 'No role found';
   }
+
+  const items = DEFAULT_SIDEBAR_ITEMS;
 
   const handleChangePassword = () => {
     navigate('/change-password');
