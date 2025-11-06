@@ -390,7 +390,7 @@ const ProjectsPage = () => {
         title="DonkiBoard"
       />
       <Box component="main" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-        <Topbar onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
+        <Topbar onMenuClick={() => setSidebarOpen(!sidebarOpen)} userId={selectedUserId} />
         <Box sx={{ flexGrow: 1, p: 3 }}>
           <Box mb={3} display="flex" justifyContent="space-between" alignItems="center">
             <Box>

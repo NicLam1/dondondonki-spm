@@ -204,7 +204,7 @@ export default function CalendarPage() {
         }}
       />
       <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
-        <Topbar onMenuClick={() => setIsSidebarOpen((value) => !value)} />
+        <Topbar onMenuClick={() => setIsSidebarOpen((value) => !value)} userId={actingUserId} />
         <Box sx={{ flexGrow: 1, py: 4 }}>
           <Container maxWidth="lg">
             <Box sx={styles.headerRow}>

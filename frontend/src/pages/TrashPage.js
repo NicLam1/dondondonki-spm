@@ -119,7 +119,7 @@ export default function TrashPage() {
       />
 
       <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
-        <Topbar />
+        <Topbar userId={actingUserId} />
         
         <Box sx={{ p: 3 }}>
           <Container maxWidth={false} disableGutters sx={{ px: 3 }}>

@@ -95,7 +95,7 @@ export default function SettingsPage() {
         title="DonkiBoard"
       />
       <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
-        <Topbar onMenuClick={() => setIsSidebarOpen((v) => !v)} />
+        <Topbar onMenuClick={() => setIsSidebarOpen((v) => !v)} userId={actingUserId} />
         <Box sx={{ flexGrow: 1, py: 4 }}>
           <Container maxWidth="lg">
             <Box sx={{ mb: 3, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
