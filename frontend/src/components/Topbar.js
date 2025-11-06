@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppBar, Avatar, InputBase, Paper, Toolbar, Box } from '@mui/material';
-import logo from '../logo.svg';
+import logo from '../logo.jfif';
 import NotificationBell from './NotificationBell';
 import ExportReportButton from './ExportReportButton';
 
