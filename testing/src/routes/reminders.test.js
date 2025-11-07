@@ -174,7 +174,7 @@ describe('Task reminders & notifications', () => {
         });
 
       expect(response.status).toBe(403);
-      expect(response.body).toEqual({ error: 'Only the task owner can set reminders' });
+      expect(response.body).toEqual({ error: 'Only the task owner/assignee can set reminders' });
     });
 
     it('returns 500 when the upsert fails', async () => {
