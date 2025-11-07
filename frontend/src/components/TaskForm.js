@@ -150,12 +150,12 @@ const handleRecurrenceChange = (field, value) => {
   // Get available members based on whether it's a task or subtask
   const getAvailableMembers = () => {
     if (parentTask) {
-      // For subtasks: only parent task owner and current members
+      // For subtasks: only parent task owner and current members (keep existing restriction)
       const parentMemberIds = parentTask.members_id || [];
       const availableUserIds = [parentTask.owner_id, ...parentMemberIds];
       return users.filter(user => availableUserIds.includes(user.user_id));
     }
-    // For main tasks: all users
+    // For main tasks: ALL users (no team/department filtering)
     return users;
   };
 
@@ -176,6 +176,46 @@ const handleRecurrenceChange = (field, value) => {
     user.full_name.toLowerCase().includes(ownerSearchTerm.toLowerCase()) ||
     user.email.toLowerCase().includes(ownerSearchTerm.toLowerCase())
   );
+
+  // Filter users for assignee selection based on access level and hierarchy
+  const getAvailableAssignees = () => {
+    const actingUser = users.find(u => u.user_id === actingUserId);
+    if (!actingUser) return [];
+
+    // Staff (level 0) cannot assign anyone
+    if (actingUser.access_level === 0) {
+      return [];
+    }
+
+    // Manager (level 1) can assign to: self OR staff in their team
+    if (actingUser.access_level === 1) {
+      return users.filter(u => 
+        u.user_id === actingUser.user_id || // self
+        (u.access_level === 0 && u.team_id === actingUser.team_id && actingUser.team_id !== null) // staff in same team
+      );
+    }
+
+    // Director (level 2) can assign to: self OR staff/managers in their department
+    if (actingUser.access_level === 2) {
+      return users.filter(u => 
+        u.user_id === actingUser.user_id || // self
+        (u.access_level < 2 && u.department_id === actingUser.department_id && actingUser.department_id !== null) // staff/managers in same department
+      );
+    }
+
+    // HR (level 3) can assign to anyone
+    if (actingUser.access_level === 3) {
+      return users;
+    }
+
+    return [];
+  };
+
+  const availableAssignees = getAvailableAssignees();
+
+  // Get acting user to check access level
+  const actingUser = users.find(u => u.user_id === actingUserId);
+  const isStaff = actingUser && actingUser.access_level === 0;
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -203,10 +243,6 @@ const handleRecurrenceChange = (field, value) => {
   };
 
   const handleMemberSelect = (userId) => {
-    if (formData.assignee_id == null || formData.assignee_id === '') {
-      showError('Select an assignee before adding members.');
-      return;
-    }
     const currentMembers = formData.members_id || [];
     // Prevent selecting the owner or assignee as a member
     if (userId === formData.owner_id) {
@@ -789,42 +825,29 @@ const handleSubmit = async (e) => {
             />
           </Stack>
 
+          {/* Owner - Read-only, always set to logged-in user */}
           {!parentTask && (
             <Box>
               <Typography variant="caption" sx={dialogStyles.fieldLabel}>Owner</Typography>
-              <div className="search-container">
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="Search for owner..."
-                  value={selectedOwner ? `${selectedOwner.full_name} (${selectedOwner.email})` : ownerSearchTerm}
-                  onChange={(e) => {
-                    setOwnerSearchTerm(e.target.value);
-                    setShowOwnerDropdown(true);
-                    if (selectedOwner && e.target.value !== `${selectedOwner.full_name} (${selectedOwner.email})`) {
-                      setFormData(prev => ({ ...prev, owner_id: '' }));
-                    }
-                  }}
-                  onFocus={() => setShowOwnerDropdown(true)}
-                  required
-                />
-                {showOwnerDropdown && (
-                  <div className="search-dropdown">
-                    {filteredOwners.slice(0, 10).map(user => (
-                      <div
-                        key={user.user_id}
-                        className="search-dropdown-item"
-                        onClick={() => handleOwnerSelect(user.user_id)}
-                      >
-                        {user.full_name} ({user.email})
-                      </div>
-                    ))}
-                    {filteredOwners.length === 0 && (
-                      <div className="search-dropdown-item disabled">No users found</div>
-                    )}
-                  </div>
-                )}
-              </div>
+              <TextField
+                fullWidth
+                size="small"
+                value={selectedOwner ? `${selectedOwner.full_name} (${selectedOwner.email})` : 'Loading...'}
+                disabled
+                InputProps={{
+                  readOnly: true,
+                }}
+                sx={{ 
+                  backgroundColor: '#f5f5f5',
+                  '& .MuiInputBase-input.Mui-disabled': {
+                    WebkitTextFillColor: '#000000',
+                    color: '#000000'
+                  }
+                }}
+              />
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                You are the owner of this task
+              </Typography>
             </Box>
           )}
 
@@ -909,45 +932,47 @@ const handleSubmit = async (e) => {
   </Box>
 )}
 
-          {/* Assignee (optional) */}
-          <Box>
-            <Typography variant="caption" sx={dialogStyles.fieldLabel}>Assignee (optional)</Typography>
-            <FormControl size="small" fullWidth>
-              <InputLabel>Assignee</InputLabel>
-              <Select
-                label="Assignee"
-                value={formData.assignee_id != null && formData.assignee_id !== '' ? String(formData.assignee_id) : ''}
-                onChange={(e) => {
-                  const raw = e.target.value;
-                  if (raw === '') {
-                    setFormData(prev => ({ ...prev, assignee_id: null, members_id: [], status: 'UNASSIGNED' }));
-                    return;
-                  }
-                  const next = parseInt(raw, 10);
-                  setFormData(prev => ({
-                    ...prev,
-                    assignee_id: Number.isInteger(next) ? next : null,
-                    // Remove assignee from members if present
-                    members_id: Array.isArray(prev.members_id) ? prev.members_id.filter((id) => id !== next) : []
-                  }));
-                }}
-              >
-                <MenuItem value="">
-                  <em>None</em>
-                </MenuItem>
-                {(parentTask ? availableMembers : users).map((u) => (
-                  <MenuItem key={u.user_id} value={String(u.user_id)}>
-                    {u.full_name} ({u.email})
+          {/* Assignee (optional) - Hidden for staff */}
+          {!isStaff && (
+            <Box>
+              <Typography variant="caption" sx={dialogStyles.fieldLabel}>Assignee (optional)</Typography>
+              <FormControl size="small" fullWidth>
+                <InputLabel>Assignee</InputLabel>
+                <Select
+                  label="Assignee"
+                  value={formData.assignee_id != null && formData.assignee_id !== '' ? String(formData.assignee_id) : ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === '') {
+                      setFormData(prev => ({ ...prev, assignee_id: null, members_id: [], status: 'UNASSIGNED' }));
+                      return;
+                    }
+                    const next = parseInt(raw, 10);
+                    setFormData(prev => ({
+                      ...prev,
+                      assignee_id: Number.isInteger(next) ? next : null,
+                      // Remove assignee from members if present
+                      members_id: Array.isArray(prev.members_id) ? prev.members_id.filter((id) => id !== next) : []
+                    }));
+                  }}
+                >
+                  <MenuItem value="">
+                    <em>None</em>
                   </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            {selectedAssignee && (
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                Assigned to: {selectedAssignee.full_name} ({selectedAssignee.email})
-              </Typography>
-            )}
-          </Box>
+                  {availableAssignees.map((u) => (
+                    <MenuItem key={u.user_id} value={String(u.user_id)}>
+                      {u.full_name} ({u.email})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              {selectedAssignee && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                  Assigned to: {selectedAssignee.full_name} ({selectedAssignee.email})
+                </Typography>
+              )}
+            </Box>
+          )}
 
           {parentTask && (
             <Box>
@@ -969,7 +994,6 @@ const handleSubmit = async (e) => {
                 size="small"
                 placeholder={`Search ${parentTask ? 'parent task' : 'organization'} members...`}
                 value={memberSearchTerm}
-                disabled={!(formData.assignee_id != null && formData.assignee_id !== '')}
                 onChange={(e) => {
                   setMemberSearchTerm(e.target.value);
                   setShowMemberDropdown(true);
@@ -978,7 +1002,7 @@ const handleSubmit = async (e) => {
               />
               {showMemberDropdown && (
                 <div className="search-dropdown">
-                  {filteredMembers.slice(0, 10).map(user => (
+                  {filteredMembers.map(user => (
                     <div
                       key={user.user_id}
                       className={`search-dropdown-item ${formData.members_id.includes(user.user_id) ? 'selected' : ''} ${(user.user_id === formData.owner_id || user.user_id === formData.assignee_id) ? 'disabled' : ''}`}

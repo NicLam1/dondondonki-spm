@@ -958,7 +958,7 @@ router.post('/tasks', async (req, res) => {
   // Load acting user (to allow creating tasks for self or for users they outrank)
   const { data: acting, error: actingErr } = await supabase
     .from('users')
-    .select('user_id, access_level')
+    .select('user_id, access_level, team_id, department_id')
     .eq('user_id', acting_user_id)
     .maybeSingle();
   if (actingErr) return res.status(500).json({ error: actingErr.message });
@@ -975,6 +975,50 @@ router.post('/tasks', async (req, res) => {
     if (!(acting.access_level > targetOwner.access_level)) {
       return res.status(403).json({ error: 'Insufficient permissions to create task for this owner' });
     }
+  }
+
+  // Validate assignee assignment based on access level and hierarchy
+  if (assignee_id != null) {
+    const { data: assignee, error: assigneeErr } = await supabase
+      .from('users')
+      .select('user_id, access_level, team_id, department_id')
+      .eq('user_id', assignee_id)
+      .maybeSingle();
+    if (assigneeErr) return res.status(500).json({ error: assigneeErr.message });
+    if (!assignee) return res.status(400).json({ error: 'Assignee not found' });
+
+    // Staff (level 0) cannot assign anyone
+    if (acting.access_level === 0) {
+      return res.status(403).json({ error: 'Staff cannot assign tasks to others' });
+    }
+
+    // Manager (level 1) can assign to: self OR staff in their team
+    if (acting.access_level === 1) {
+      const canAssign = 
+        assignee.user_id === acting.user_id || // self-assignment
+        (assignee.access_level === 0 && assignee.team_id === acting.team_id && acting.team_id !== null); // staff in same team
+      
+      if (!canAssign) {
+        return res.status(403).json({ 
+          error: 'Managers can only assign to themselves or staff in their team' 
+        });
+      }
+    }
+
+    // Director (level 2) can assign to: self OR staff/managers in their department
+    if (acting.access_level === 2) {
+      const canAssign = 
+        assignee.user_id === acting.user_id || // self-assignment
+        (assignee.access_level < 2 && assignee.department_id === acting.department_id && acting.department_id !== null); // staff/managers in same department
+      
+      if (!canAssign) {
+        return res.status(403).json({ 
+          error: 'Directors can only assign to themselves or staff/managers in their department' 
+        });
+      }
+    }
+
+    // HR (level 3) can assign to anyone - no additional checks needed
   }
 
   // Auto-find project_id if project name is provided but project_id is not
@@ -2312,7 +2356,7 @@ router.patch('/tasks/:id', async (req, res) => {
 
   // NEW: reuse the same access checks as status update
   const { data: acting, error: actingErr } = await supabase
-    .from('users').select('user_id, access_level').eq('user_id', actingUserId).maybeSingle();
+    .from('users').select('user_id, access_level, team_id, department_id').eq('user_id', actingUserId).maybeSingle();
   if (actingErr) return res.status(500).json({ error: actingErr.message });
   if (!acting) return res.status(400).json({ error: 'Invalid acting_user_id' });
 
@@ -2333,6 +2377,50 @@ router.patch('/tasks/:id', async (req, res) => {
   // Enforce: only the owner can change priority_bucket
   if (Object.prototype.hasOwnProperty.call(patch, 'priority_bucket') && !isOwner) {
     return res.status(403).json({ error: 'Only the task owner can change the priority' });
+  }
+
+  // Validate assignee assignment based on access level and hierarchy (if assignee is being changed)
+  if (Object.prototype.hasOwnProperty.call(patch, 'assignee_id') && patch.assignee_id !== null) {
+    const { data: assignee, error: assigneeErr } = await supabase
+      .from('users')
+      .select('user_id, access_level, team_id, department_id')
+      .eq('user_id', patch.assignee_id)
+      .maybeSingle();
+    if (assigneeErr) return res.status(500).json({ error: assigneeErr.message });
+    if (!assignee) return res.status(400).json({ error: 'Assignee not found' });
+
+    // Staff (level 0) cannot assign anyone
+    if (acting.access_level === 0) {
+      return res.status(403).json({ error: 'Staff cannot assign tasks to others' });
+    }
+
+    // Manager (level 1) can assign to: self OR staff in their team
+    if (acting.access_level === 1) {
+      const canAssign = 
+        assignee.user_id === acting.user_id || // self-assignment
+        (assignee.access_level === 0 && assignee.team_id === acting.team_id && acting.team_id !== null); // staff in same team
+      
+      if (!canAssign) {
+        return res.status(403).json({ 
+          error: 'Managers can only assign to themselves or staff in their team' 
+        });
+      }
+    }
+
+    // Director (level 2) can assign to: self OR staff/managers in their department
+    if (acting.access_level === 2) {
+      const canAssign = 
+        assignee.user_id === acting.user_id || // self-assignment
+        (assignee.access_level < 2 && assignee.department_id === acting.department_id && acting.department_id !== null); // staff/managers in same department
+      
+      if (!canAssign) {
+        return res.status(403).json({ 
+          error: 'Directors can only assign to themselves or staff/managers in their department' 
+        });
+      }
+    }
+
+    // HR (level 3) can assign to anyone - no additional checks needed
   }
 
   // Derive next values to validate business rules
