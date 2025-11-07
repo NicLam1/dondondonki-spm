@@ -28,8 +28,8 @@ export default function DeleteButton({ task, actingUserId, onSuccess, onError })
   const [deleteConfirmation, setDeleteConfirmation] = useState({ subtaskCount: 0, taskTitle: '' });
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // FIXED: Check if user can delete this task (OWNER ONLY, not assignee)
-  const canDelete = actingUserId && task && (task.owner_id === parseInt(actingUserId));
+  // Check if user can delete this task (OWNER or ASSIGNEE)
+  const canDelete = actingUserId && task && (task.owner_id === parseInt(actingUserId) || task.assignee_id === parseInt(actingUserId));
 
   if (!canDelete) return null;
 

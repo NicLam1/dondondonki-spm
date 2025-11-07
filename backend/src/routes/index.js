@@ -1517,10 +1517,11 @@ async function checkTaskAccess(taskId, actingUserId) {
 
   // Check access (same logic as your task routes)
   const isOwner = task.owner_id === actingUserId;
+  const isAssignee = task.assignee_id === actingUserId;
   const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
   const outranksOwner = owner && (acting.access_level > owner.access_level);
   
-  return isOwner || isMember || outranksOwner;
+  return isOwner || isAssignee || isMember || outranksOwner;
 }
 
 // Upload attachment to task
@@ -1786,9 +1787,10 @@ router.get('/tasks/:id/activity', async (req, res) => {
   if (ownerErr) return res.status(500).json({ error: ownerErr.message });
 
   const isOwner = task.owner_id === actingUserId;
+  const isAssignee = task.assignee_id === actingUserId;
   const isMember = Array.isArray(task.members_id) && task.members_id.includes(actingUserId);
   const outranksOwner = owner && (acting.access_level > owner.access_level);
-  const canView = isOwner || isMember || outranksOwner;
+  const canView = isOwner || isAssignee || isMember || outranksOwner;
   if (!canView) return res.status(403).json({ error: 'Forbidden' });
 
   // Fetch logs and enrich authors
