@@ -3194,9 +3194,9 @@ router.put('/tasks/:id/reminders', async (req, res) => {
       return res.status(400).json({ error: 'Cannot enable reminders for a task without a due date' });
     }
 
-    // Only task owner can set reminders
-    if (task.owner_id !== acting_user_id) {
-      return res.status(403).json({ error: 'Only the task owner can set reminders' });
+    // Only task owner or assignee can set reminders
+    if (task.owner_id !== acting_user_id && task.assignee_id !== acting_user_id) {
+      return res.status(403).json({ error: 'Only the task owner/assignee can set reminders' });
     }
 
     // Upsert reminder settings

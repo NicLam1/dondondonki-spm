@@ -100,7 +100,7 @@ const PrioritySelector = ({
   // If user doesn't have authority, wrap in tooltip
   if (!canChangePriority) {
     return (
-      <Tooltip title="Only the task owner can change priority" arrow>
+      <Tooltip title="Only the task owner/assignee can change priority or notifications" arrow>
         <span>{dropdown}</span>
       </Tooltip>
     );

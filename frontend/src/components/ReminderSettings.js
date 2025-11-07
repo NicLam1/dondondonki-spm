@@ -28,7 +28,7 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
   const [hasChanges, setHasChanges] = useState(false);
   const [originalSettings, setOriginalSettings] = useState(null);
 
-  const isOwner = task?.owner_id === actingUserId;
+  const isOwnerOrAssignee = task?.owner_id === actingUserId || task?.assignee_id === actingUserId;
 
   // Fetch current reminder settings
   useEffect(() => {
@@ -149,10 +149,10 @@ const ReminderSettings = ({ task, actingUserId, onSuccess, onError }) => {
     );
   }
 
-  if (!isOwner) {
+  if (!isOwnerOrAssignee) {
     return (
       <Alert severity="info" icon={<InfoOutlinedIcon />}>
-        Only the task owner can configure reminder settings.
+        Only the task owner/assignee can configure reminder settings.
         {enabled && (
           <Box sx={{ mt: 1 }}>
             <Typography variant="caption" display="block">
