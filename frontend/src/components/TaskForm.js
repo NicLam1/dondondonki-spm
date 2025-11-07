@@ -59,8 +59,8 @@ const getAssignableUsers = (users, actingUserId) => {
   
   const level = typeof actingUser.access_level === 'number' ? actingUser.access_level : 0;
   
-  // Level 0 (STAFF): Cannot assign anyone
-  if (level === 0) return [];
+  // Level 0 (STAFF): Can only assign self
+  if (level === 0) return users.filter(u => u.user_id === actingUserId);
   
   // Level 3 (HR): Can assign anyone
   if (level === 3) return users;
