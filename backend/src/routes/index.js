@@ -1092,7 +1092,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
     due_date, 
     project, 
     owner_id, 
-    assignee_id = null,
+    assignee_id, // Don't default to null yet - will inherit from parent
     members_id = [], 
     acting_user_id 
   } = req.body;
@@ -1109,10 +1109,6 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   if (!due_date || String(due_date).trim() === '') {
     return res.status(400).json({ error: 'due_date is required' });
   }
-
-  // Validate status
-  const validStatuses = ['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED'];
-  const effectiveStatus = assignee_id == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
 
   // Load acting user to check permissions
   const { data: actingUser, error: actingErr } = await supabase
@@ -1131,7 +1127,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   // Verify parent task exists and check permissions
   const { data: parentTask, error: parentErr } = await supabase
     .from('tasks')
-    .select('task_id, title, owner_id, project, priority_bucket')
+    .select('task_id, title, owner_id, project, priority_bucket, assignee_id, due_date')
     .eq('task_id', parentTaskId)
     .eq('is_deleted', false)
     .single();
@@ -1142,6 +1138,27 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   if (!parentTask) {
     return res.status(404).json({ error: 'Parent task not found' });
   }
+
+    // ✅ FIXED: Only validate due date if parent has a due date
+  if (parentTask.due_date && due_date > parentTask.due_date) {
+    return res.status(400).json({ 
+      error: `Subtask due date (${due_date}) cannot be later than parent task due date (${parentTask.due_date})` 
+    });
+  }
+
+  // Validate subtask due date is not later than parent due date
+  if (parentTask.due_date && due_date > parentTask.due_date) {
+    return res.status(400).json({ 
+      error: `Subtask due date cannot be later than parent task due date (${parentTask.due_date})` 
+    });
+  }
+
+  // Inherit assignee from parent if not explicitly provided
+  const effectiveAssigneeId = assignee_id !== undefined ? assignee_id : parentTask.assignee_id;
+
+  // Validate status
+  const validStatuses = ['UNASSIGNED', 'ONGOING', 'UNDER_REVIEW', 'COMPLETED'];
+  const effectiveStatus = effectiveAssigneeId == null ? 'UNASSIGNED' : (status && validStatuses.includes(status) ? status : 'ONGOING');
 
   // Check if acting user can create subtask (must be owner or have higher access level than parent task owner)
   if (parentTask.owner_id !== acting_user_id) {
@@ -1212,7 +1229,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
   if (normalizedSubMembers.includes(owner_id)) {
     return res.status(400).json({ error: 'Owner cannot be a member' });
   }
-  if (assignee_id != null && normalizedSubMembers.includes(assignee_id)) {
+  if (effectiveAssigneeId != null && normalizedSubMembers.includes(effectiveAssigneeId)) {
     return res.status(400).json({ error: 'Assignee cannot be a member' });
   }
 
@@ -1227,7 +1244,7 @@ router.post('/tasks/:id/subtask', async (req, res) => {
       project: taskProject,
       project_id: subtaskProjectId, // Link to project
       owner_id,
-      assignee_id,
+      assignee_id: effectiveAssigneeId,
       members_id: normalizedSubMembers,
       parent_task_id: parentTaskId,
       is_deleted: false,
@@ -1979,7 +1996,7 @@ router.put('/tasks/:id/priority', async (req, res) => {
   if (task.is_deleted) return res.status(400).json({ error: 'Cannot modify deleted task' });
 
   // Only owner can change priority
-  if (task.owner_id !== acting_user_id) {
+  if (task.owner_id !== acting_user_id ) {
     return res.status(403).json({ error: 'Only the task owner can change the priority' });
   }
 

@@ -61,7 +61,7 @@ const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }
     priority_bucket: 5,
     due_date: '',
     project: parentTask?.project || '',
-    owner_id: actingUserId || '',
+    owner_id: actingUserId,
     assignee_id: null,
     members_id: [],
     acting_user_id: actingUserId || '',
@@ -91,6 +91,18 @@ const handleRecurrenceChange = (field, value) => {
   }));
 };
 
+  // ✅ ADD: Helper to get max date for subtasks
+  const getMaxSubtaskDate = () => {
+    // For subtasks being added to existing task, use parent's due date
+    if (parentTask?.due_date) return parentTask.due_date;
+    // For subtasks of new task, use form's due date
+    if (!parentTask && formData.due_date) return formData.due_date;
+    return null;
+  };
+
+  const handleSelectChange = (name, value) => {
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
   const [subtasks, setSubtasks] = useState([]);
   const [showSubtaskForm, setShowSubtaskForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -118,7 +130,7 @@ const handleRecurrenceChange = (field, value) => {
       setFormData(prev => ({
         ...prev,
         project: '',
-        owner_id: actingUserId || '',
+        owner_id: actingUserId,
         priority_bucket: 5,
       }));
     }
@@ -203,10 +215,7 @@ const handleRecurrenceChange = (field, value) => {
   };
 
   const handleMemberSelect = (userId) => {
-    if (formData.assignee_id == null || formData.assignee_id === '') {
-      showError('Select an assignee before adding members.');
-      return;
-    }
+
     const currentMembers = formData.members_id || [];
     // Prevent selecting the owner or assignee as a member
     if (userId === formData.owner_id) {
@@ -255,6 +264,12 @@ const handleRecurrenceChange = (field, value) => {
   };
 
   const addSubtask = () => {
+
+    // ✅ UPDATED: Check if parent task has due date first
+    if (!formData.due_date) {
+      showError('Please set a due date for the main task before adding subtasks');
+      return;
+    }
     const newSubtask = {
       id: Date.now(),
       title: '',
@@ -268,27 +283,33 @@ const handleRecurrenceChange = (field, value) => {
     setShowSubtaskForm(true);
   };
 
-// const addSubtask = () => {
-//   const newSubtask = {
-//     id: Date.now(),
-//     title: '',
-//     description: '',
-//     status: 'UNASSIGNED',
-//     due_date: '',
-//     owner_id: formData.owner_id,
-//     assignee_id: null,
-//     members_id: [],
-//     priority_bucket: formData.priority_bucket
-//   };
-//   setSubtasks(prev => [...prev, newSubtask]);
-// };
-
   const updateSubtask = (id, field, value) => {
     // Validate due_date for subtasks too
-    if (field === 'due_date' && value && value < today) {
+  if (field === 'due_date') {
+    if (value && value < today) {
       showError('Due date cannot be in the past');
       return;
     }
+
+    // ✅ FIXED: Ensure proper date comparison
+    const maxDate = getMaxSubtaskDate();
+    if (value && maxDate) {
+      // Normalize both dates to YYYY-MM-DD strings for comparison
+      const subtaskDate = new Date(value).toISOString().split('T')[0];
+      const parentDate = new Date(maxDate).toISOString().split('T')[0];
+      
+      if (subtaskDate > parentDate) {
+        showError(`Subtask due date cannot be later than parent task due date (${parentDate})`);
+        return;
+      }
+    }
+  }
+      // // Check if subtask due date is after parent task due date
+      // if (value && formData.due_date && value > formData.due_date) {
+      //   showError(`Subtask due date cannot be later than parent task due date (${formData.due_date})`);
+      //   return;
+      // }
+
 
     setSubtasks(prev => prev.map(subtask => 
       subtask.id === id ? { ...subtask, [field]: value } : subtask
@@ -319,178 +340,6 @@ const removeFile = (index) => {
   setSelectedFiles(prev => prev.filter((_, i) => i !== index));
 };
 
-// Update the handleSubmit function to upload attachments after task creation:
-// const handleSubmit = async (e) => {
-//   e.preventDefault();
-//   setIsSubmitting(true);
-
-//   try {
-  
-//         // Validate required fields
-//     if (!formData.title.trim()) {
-//       throw new Error('Title is required');
-//     }
-//     if (!formData.due_date || formData.due_date.trim() === '') {
-//       throw new Error('Due date is required');
-//     }
-    
-//     // Validate recurrence fields
-//     if (formData.is_recurring) {
-//       if (!formData.due_date || formData.due_date.trim() === '') {
-//         throw new Error('Due date is required for recurring tasks');
-//       }
-//       if (formData.recurrence_end_date && formData.recurrence_end_date.trim() !== '' && formData.recurrence_end_date <= formData.due_date) {
-//         throw new Error('Recurrence end date must be after due date');
-//       }
-//     }
-
-//     // STEP 1: Create the task first and WAIT for completion
-//     console.log('🚀 Creating task with data:', formData);
-
-//     // Clean the form data before sending
-//     const cleanedFormData = {
-//       ...formData,
-//       // Ensure empty strings become null for optional date fields
-//       recurrence_end_date: formData.recurrence_end_date && formData.recurrence_end_date.trim() !== '' 
-//         ? formData.recurrence_end_date 
-//         : null
-//     };
-    
-//     const endpoint = parentTask 
-//       ? `/tasks/${parentTask.task_id}/subtask`
-//       : '/tasks';
-    
-//     const taskResponse = await apiJson(endpoint, {
-//       method: 'POST',
-//       body: {
-//         ...formData,
-//         parent_task_id: parentTask?.task_id || null
-//       }
-//     });
-
-//     if (!taskResponse.success) {
-//       throw new Error(taskResponse.error || 'Failed to create task');
-//     }
-
-//     const createdTask = taskResponse.data;
-//     console.log('✅ Task created successfully:', {
-//       taskId: createdTask.task_id,
-//       title: createdTask.title
-//     });
-
-//     // STEP 2: Only proceed with attachments if task creation was successful
-//     if (selectedFiles.length > 0 && !parentTask) {
-//       console.log(`📎 Starting upload of ${selectedFiles.length} files for task ${createdTask.task_id}`);
-      
-//       const uploadResults = [];
-      
-//       // Upload files sequentially to avoid overwhelming the server
-//       for (let i = 0; i < selectedFiles.length; i++) {
-//         const file = selectedFiles[i];
-//         console.log(`📤 Uploading file ${i + 1}/${selectedFiles.length}: ${file.name}`);
-        
-//         try {
-//           const uploadFormData = new FormData();
-//           uploadFormData.append('file', file);
-//           uploadFormData.append('acting_user_id', actingUserId.toString());
-
-//           // Wait for each upload to complete before starting the next
-//           const uploadResponse = await fetch(`${API_BASE}/tasks/${createdTask.task_id}/attachments`, {
-//             method: 'POST',
-//             credentials: 'include',
-//             body: uploadFormData
-//           });
-
-//           const uploadResult = await uploadResponse.json();
-          
-//           if (uploadResult.success) {
-//             console.log(`✅ File uploaded successfully: ${file.name}`);
-//             uploadResults.push({ file: file.name, success: true });
-//           } else {
-//             console.error(`❌ Failed to upload ${file.name}:`, uploadResult.error);
-//             uploadResults.push({ file: file.name, success: false, error: uploadResult.error });
-//             showError(`Failed to upload ${file.name}: ${uploadResult.error}`);
-//           }
-//         } catch (uploadError) {
-//           console.error(`❌ Upload error for ${file.name}:`, uploadError);
-//           uploadResults.push({ file: file.name, success: false, error: uploadError.message });
-//           showError(`Failed to upload ${file.name}: ${uploadError.message}`);
-//         }
-//       }
-      
-//       // Summary of upload results
-//       const successfulUploads = uploadResults.filter(r => r.success).length;
-//       const failedUploads = uploadResults.filter(r => !r.success).length;
-      
-//       console.log(`📊 Upload summary: ${successfulUploads} successful, ${failedUploads} failed`);
-      
-//       if (successfulUploads > 0) {
-//         showSuccess(`Task "${createdTask.title}" created with ${successfulUploads} attachment(s)!`);
-//       }
-//     }
-
-//     // STEP 3: Create subtasks if any (only for main tasks, not subtasks)
-//     if (subtasks.length > 0 && !parentTask) {
-//       console.log(`📋 Creating ${subtasks.length} subtasks...`);
-      
-//       for (const subtask of subtasks) {
-//         if (subtask.title.trim()) {
-//           try {
-//             await apiJson(`/tasks/${createdTask.task_id}/subtask`, {
-//               method: 'POST',
-//               body: {
-//                 ...subtask,
-//                 acting_user_id: formData.acting_user_id,
-//                 owner_id: formData.owner_id
-//               }
-//             });
-//             console.log(`✅ Subtask created: ${subtask.title}`);
-//           } catch (subtaskError) {
-//             console.warn(`❌ Failed to create subtask: ${subtask.title}`, subtaskError);
-//           }
-//         }
-//       }
-//     }
-
-//     // STEP 4: Success - close form and notify parent
-//     console.log('🎉 Task creation process completed successfully');
-//     onSubmit && onSubmit(createdTask);
-//     onClose();
-    
-//     // Reset form
-//     setFormData({
-//       title: '',
-//       description: '',
-//       status: 'UNASSIGNED',
-//       priority_bucket: 5,
-//       due_date: '',
-//       project: '',
-//       owner_id: actingUserId || '',
-//       assignee_id: null,
-//       members_id: [],
-//       acting_user_id: actingUserId || '',
-//       // NEW: Reset recurrence fields
-//       is_recurring: false,
-//       recurrence_type: 'daily',
-//       recurrence_interval: 1,
-//       recurrence_end_date: ''
-//     });
-//     setSubtasks([]);
-//     setSelectedFiles([]);
-//     setShowSubtaskForm(false);
-
-//     // Show final success message if no attachments were uploaded
-//     if (selectedFiles.length === 0) {
-//       showSuccess(`Task "${createdTask.title}" created successfully!`);
-//     }
-
-//   } catch (error) {
-//     console.error('❌ Error in task creation process:', error);
-//     showError(`Failed to create task: ${error.message}`);
-//   } finally {
-//     setIsSubmitting(false);
-//   }
-// };
 
 const handleSubmit = async (e) => {
   e.preventDefault();
@@ -506,12 +355,24 @@ const handleSubmit = async (e) => {
     }
 
     // ✅ VALIDATE SUBTASKS
+      // ✅ FIXED: Validate subtasks with proper date comparison
+    const maxDate = getMaxSubtaskDate();
     for (const subtask of subtasks) {
       if (subtask.title.trim() && !subtask.due_date) {
         throw new Error(`Due date is required for subtask: "${subtask.title}"`);
       }
       if (!subtask.title.trim()) {
         throw new Error('All subtasks must have a title');
+      }
+
+      // Proper date comparison
+      if (maxDate && subtask.due_date) {
+        const subtaskDate = new Date(subtask.due_date).toISOString().split('T')[0];
+        const parentDate = new Date(maxDate).toISOString().split('T')[0];
+        
+        if (subtaskDate > parentDate) {
+          throw new Error(`Subtask "${subtask.title}" due date (${subtaskDate}) cannot be later than parent task due date (${parentDate})`);
+        }
       }
     }
     
@@ -734,20 +595,23 @@ const handleSubmit = async (e) => {
           />
 
           <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap' }}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
-              <InputLabel>Status</InputLabel>
-              <Select
-                label="Status"
-                name="status"
-                value={formData.status}
-                onChange={handleInputChange}
-              >
+              {/* ✅ Status only for subtasks */}
+              {parentTask && (
+                <FormControl size="small" sx={{ minWidth: 140 }}>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    name="status"
+                    value={formData.status}
+                    label="Status"
+                    onChange={(e) => handleSelectChange('status', e.target.value)}
+                  >
                 <MenuItem value="UNASSIGNED">Unassigned</MenuItem>
                 <MenuItem value="ONGOING" disabled={!(formData.assignee_id != null && formData.assignee_id !== '')}>Ongoing</MenuItem>
                 <MenuItem value="UNDER_REVIEW" disabled={!(formData.assignee_id != null && formData.assignee_id !== '')}>Under Review</MenuItem>
                 <MenuItem value="COMPLETED" disabled={!(formData.assignee_id != null && formData.assignee_id !== '')}>Completed</MenuItem>
               </Select>
             </FormControl>
+            )}
 
             {!parentTask && (
               <FormControl size="small" sx={{ minWidth: 160 }}>
@@ -774,9 +638,20 @@ const handleSubmit = async (e) => {
               value={formData.due_date}
               onChange={handleInputChange}
               InputLabelProps={{ shrink: true }}
-              inputProps={{ min: today }}
-              size="small"
-              sx={{ minWidth: 200 }}
+                slotProps={{
+                  htmlInput: {
+                    min: today,
+                    max: parentTask?.due_date || undefined // ✅ Restrict if adding to existing task
+                  }
+                }}
+                size="small"
+                required
+                sx={{ minWidth: 200 }}
+                helperText={
+                  parentTask?.due_date 
+                    ? `Must be between today and ${parentTask.due_date}` 
+                    : undefined
+                }
             />
             <TextField
               label="Project"
@@ -789,7 +664,7 @@ const handleSubmit = async (e) => {
             />
           </Stack>
 
-          {!parentTask && (
+          {/* {!parentTask && (
             <Box>
               <Typography variant="caption" sx={dialogStyles.fieldLabel}>Owner</Typography>
               <div className="search-container">
@@ -826,7 +701,7 @@ const handleSubmit = async (e) => {
                 )}
               </div>
             </Box>
-          )}
+          )} */}
 
       {/* Recurrence Section */}
 {!parentTask && (
@@ -969,7 +844,6 @@ const handleSubmit = async (e) => {
                 size="small"
                 placeholder={`Search ${parentTask ? 'parent task' : 'organization'} members...`}
                 value={memberSearchTerm}
-                disabled={!(formData.assignee_id != null && formData.assignee_id !== '')}
                 onChange={(e) => {
                   setMemberSearchTerm(e.target.value);
                   setShowMemberDropdown(true);
@@ -1176,6 +1050,13 @@ const handleSubmit = async (e) => {
       </Button>
     </Stack>
 
+              {/* ✅ Show helpful reminder instead of blocking */}
+              {subtasks.length > 0 && !formData.due_date && (
+                <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 1 }}>
+                  ⚠️ Remember to set a due date for the main task. Subtask due dates must be on or before the parent task's due date.
+                </Typography>
+              )}
+
     {subtasks.map((subtask) => (
       <Box key={subtask.id} sx={{ p: 1.5, border: '1px solid #e0e0e0', borderRadius: 1, mb: 1.5 }}>
         <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
@@ -1216,12 +1097,18 @@ const handleSubmit = async (e) => {
               value={subtask.due_date}
               onChange={(e) => updateSubtask(subtask.id, 'due_date', e.target.value)}
               InputLabelProps={{ shrink: true }}
+              slotProps={{
+                          htmlInput: {
+                            min: today,
+                            max: getMaxSubtaskDate() || undefined // ✅ Only restrict if parent has due date
+                          }
+                        }}
               size="small"
               required
               sx={{ minWidth: 180 }}
             />
             
-            <FormControl size="small" sx={{ minWidth: 120 }}>
+            {/* <FormControl size="small" sx={{ minWidth: 120 }}>
               <InputLabel>Assignee</InputLabel>
               <Select
                 value={subtask.assignee_id || ''}
@@ -1237,7 +1124,7 @@ const handleSubmit = async (e) => {
                   </MenuItem>
                 ))}
               </Select>
-            </FormControl>
+            </FormControl> */}
           </Stack>
         </Stack>
       </Box>
