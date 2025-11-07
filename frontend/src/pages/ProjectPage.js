@@ -106,8 +106,8 @@ const ProjectsPage = () => {
                 const { data: projectDetail } = await detailResponse.json();
                 const relatedTasks = projectDetail.related_tasks || [];
                 
-                // Calculate stats from related tasks
-                const stats = calculateProjectStats(relatedTasks);
+                // Calculate stats from related tasks and project members
+                const stats = calculateProjectStats(relatedTasks, projectDetail);
                 
                 return {
                   id: project.project_id,
@@ -182,7 +182,7 @@ const ProjectsPage = () => {
   };
 
 
-  const calculateProjectStats = (tasks) => {
+  const calculateProjectStats = (tasks, projectDetail) => {
     const stats = {
       taskCount: tasks.length,
       completedCount: 0,
@@ -203,7 +203,7 @@ const ProjectsPage = () => {
         }
       }
 
-      // Collect unique member IDs
+      // Collect unique member IDs from tasks
       if (task.owner_id) {
         stats.members.add(task.owner_id);
       }
@@ -215,7 +215,17 @@ const ProjectsPage = () => {
       }
     });
 
-    stats.memberCount = stats.members.size;
+    // CRITICAL: Also add members from the project's members array (includes manually invited members)
+    if (projectDetail && Array.isArray(projectDetail.members)) {
+      projectDetail.members.forEach(id => stats.members.add(id));
+    }
+    
+    // Always ensure owner is included
+    if (projectDetail && projectDetail.owner_id) {
+      stats.members.add(projectDetail.owner_id);
+    }
+
+    stats.memberCount = Math.max(1, stats.members.size);
     stats.completionRate = stats.taskCount > 0 ? Math.round((stats.completedCount / stats.taskCount) * 100) : 0;
 
     return stats;
