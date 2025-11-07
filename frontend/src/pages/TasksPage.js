@@ -1245,6 +1245,14 @@ const handleTaskCreated = (newTask) => {
                 <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
                   <Box sx={styles.dialogInfoItem}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
+                      Owner
+                    </Typography>
+                    <Typography variant="body2" sx={styles.dialogInfoValue}>
+                      {usersById.get(selectedTask.owner_id)?.full_name || "—"}
+                    </Typography>
+                  </Box>
+                  <Box sx={styles.dialogInfoItem}>
+                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Assignee
                     </Typography>
                     {editMode ? (
@@ -1402,7 +1410,7 @@ const handleTaskCreated = (newTask) => {
             </DialogContent>
             <DialogActions sx={{ justifyContent: "space-between", px:3}}>
               <Box sx={{ display: "flex", gap: 1 }}>
-                {!editMode && (
+                {!editMode && actingUser && selectedTask && selectedTask.owner_id === actingUser.user_id && (
                   <Button
                     size="small"
                     variant="outlined"
