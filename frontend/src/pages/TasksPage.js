@@ -1410,7 +1410,7 @@ const handleTaskCreated = (newTask) => {
             </DialogContent>
             <DialogActions sx={{ justifyContent: "space-between", px:3}}>
               <Box sx={{ display: "flex", gap: 1 }}>
-                {!editMode && actingUser && selectedTask && selectedTask.owner_id === actingUser.user_id && (
+                {!editMode && actingUser && selectedTask && (selectedTask.owner_id === actingUser.user_id || selectedTask.assignee_id === actingUser.user_id) && (
                   <Button
                     size="small"
                     variant="outlined"

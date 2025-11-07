@@ -20,8 +20,8 @@ const PrioritySelector = ({
   size = "small"
 }) => {
   const [loading, setLoading] = useState(false);
-  // Only task owner can change the priority bucket
-  const canChangePriority = !!(actingUser && task && actingUser.user_id === task.owner_id);
+  // Task owner or assignee can change the priority bucket
+  const canChangePriority = !!(actingUser && task && (actingUser.user_id === task.owner_id || actingUser.user_id === task.assignee_id));
 
   const priorities = Array.from({ length: 10 }, (_, i) => ({ value: i + 1, label: `P${i + 1}` }));
 
