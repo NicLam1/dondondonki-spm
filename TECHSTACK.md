@@ -1,11 +1,11 @@
 Tech Stack
 
 - Frontend: React.js, Material UI, React Query
-- Backend: Node.js, Express.js, JWT + Passport.js
+- Backend: Node.js, Express.js
 - Database: Supabase (PostgreSQL)
-- Notifications: In-app via Supabase (notifications table), Nodemailer (email)
-- Reporting: pdfkit, exceljs
-- Hosting: Vercel (frontend), Heroku (backend), Supabase (DB)
+- Notifications: In-app via Supabase tables, Nodemailer (email)
+- Reporting: pdfkit (PDF export)
+- Hosting: Vercel (frontend + serverless API) or long-running host (Heroku/Render), Supabase (DB)
 
 1. User Authorisation and Authentication
 Tech Used:
@@ -13,9 +13,7 @@ Tech Used:
 
   - Node.js + Express.js → REST API for login, signup, role-based endpoints.
 
-  - JWT (JSON Web Token) → issue tokens for authenticated sessions.
-
-  - Passport.js → middleware to handle password-based login, attach roles (staff/manager/director/HR).
+  - Supabase Auth → hosted authentication; sessions handled by Supabase.
 
   - Supabase (PostgreSQL) → Users table with hashed passwords & roles.
 
@@ -24,11 +22,11 @@ User Flow:
 
   1. User logs in with email + password.
 
-  2. Backend checks credentials, issues JWT containing role.
+  2. Backend delegates auth to Supabase and fetches profile/role from DB.
 
   3. Role determines access (managers can assign tasks, HR can generate reports, etc.).
 
-  4. Protected routes (Express middleware) check JWT and enforce permissions.
+  4. Protected routes enforce permissions using `acting_user_id` and role lookups.
 
 2. Task Management
 Tech Used:
@@ -49,7 +47,7 @@ Core Features:
 
   - Managers and above can assign tasks to staff (reassign owner_id).
 
-  - Task details: deadline, notes, status (To Do, In Progress, Done).
+  - Task details: deadline, notes, status (UNASSIGNED, ONGOING, UNDER_REVIEW, COMPLETED).
 
 3. Task Grouping and Organisation (Projects)
 Tech Used:
@@ -75,7 +73,7 @@ Tech Used:
 
   - Supabase DB + Express → Store and fetch due dates.
 
-  - Scheduled checks via server-side jobs (cron/server) → send reminders before/after task due.
+  - Scheduled checks via Vercel Cron or in-process schedulers → send reminders before/after task due.
 
 Feature Example:
 
@@ -90,16 +88,16 @@ Tech Used:
 
   - Server-side logic → triggers notifications (reminders, mentions, updates).
 
-  - Express.js → API to trigger notifications.
+  - Express.js → APIs handle events (assignment, status change, mentions).
 
-  - In-app: Store unread notifications in a Notifications table (users fetch via React Query, real-time refresh).
+  - In-app: rows stored in a `notifications` table (frontend fetch; optional real-time if enabled).
 
-  - Email: Nodemailer (simpler than SendGrid/AWS SES — fast setup for school projects).
+  - Email: Nodemailer (SMTP configurable via env).
 
 Feature Example:
 
 
-  - Due date approaching → BullMQ job pushes notification → user sees in-app + optional email.
+  - Due date approaching → scheduled job (Vercel Cron or in-process) sends in-app and/or email per user prefs.
 
   - Someone comments on a task → Mentioned user gets notified.
 
@@ -107,11 +105,11 @@ Feature Example:
 Tech Used:
 
 
-  - Express.js → API to generate reports on project status using SQL queries.
+  - Express.js → API generates reports on project status from Supabase queries.
 
   - pdfkit → generate PDF snapshot report (completed vs ongoing).
 
-  - exceljs → generate Excel reports for project planning (“Gantt-like schedule”).
+  - (No Excel export in current build.)
 
 Usage:
 
@@ -120,4 +118,4 @@ Usage:
 
   - Backend pulls all project + task data from Supabase.
 
-  - Generate PDF (formal report) OR Excel sheet (editable planning doc).
+  - Generate PDF (formal report).
