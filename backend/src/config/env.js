@@ -9,7 +9,6 @@ const env = {
   PORT: process.env.PORT || 4000,
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   JWT_SECRET: process.env.JWT_SECRET,
-  REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
   SUPABASE_URL: process.env.SUPABASE_URL,
   SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,

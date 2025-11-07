@@ -3,7 +3,7 @@ Tech Stack
 - Frontend: React.js, Material UI, React Query
 - Backend: Node.js, Express.js, JWT + Passport.js
 - Database: Supabase (PostgreSQL)
-- Notifications: BullMQ (in-app) (USE UPSTASH https://upstash.com/ REDIS), Nodemailer (email)
+- Notifications: In-app via Supabase (notifications table), Nodemailer (email)
 - Reporting: pdfkit, exceljs
 - Hosting: Vercel (frontend), Heroku (backend), Supabase (DB)
 
@@ -75,7 +75,7 @@ Tech Used:
 
   - Supabase DB + Express → Store and fetch due dates.
 
-  - BullMQ (job scheduler) → checks deadlines, sends reminders before/after task due. (USE UPSTASH https://upstash.com/ REDIS)
+  - Scheduled checks via server-side jobs (cron/server) → send reminders before/after task due.
 
 Feature Example:
 
@@ -88,7 +88,7 @@ Feature Example:
 Tech Used:
 
 
-  - BullMQ → queue system for sending notifications (reminders, mentions, updates) (USE UPSTASH https://upstash.com/ REDIS).
+  - Server-side logic → triggers notifications (reminders, mentions, updates).
 
   - Express.js → API to trigger notifications.
 
