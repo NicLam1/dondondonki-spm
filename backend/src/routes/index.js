@@ -661,7 +661,7 @@ router.get('/tasks', async (req, res) => {
 
     if (effectiveTargets.length === 0) return res.json({ data: [] });
 
-    // Fetch tasks where owner is in targets OR members array contains any target id
+    // Fetch tasks where owner is in targets OR assignee is in targets OR members array contains any target id
     // First get owners
     const { data: ownerTasks, error: ownerErr } = await supabase
       .from('tasks')
@@ -669,6 +669,14 @@ router.get('/tasks', async (req, res) => {
       .in('owner_id', effectiveTargets)
       .eq('is_deleted', false);
     if (ownerErr) return res.status(500).json({ error: ownerErr.message });
+
+    // Then get assignee tasks
+    const { data: assigneeTasks, error: assigneeErr } = await supabase
+      .from('tasks')
+      .select('*')
+      .in('assignee_id', effectiveTargets)
+      .eq('is_deleted', false);
+    if (assigneeErr) return res.status(500).json({ error: assigneeErr.message });
 
     // Then get member tasks using Postgres ANY/overlap operator
     const { data: memberTasks, error: memberErr } = await supabase
@@ -680,12 +688,13 @@ router.get('/tasks', async (req, res) => {
 
     console.log('📊 Tasks found:', {
       ownerTasks: ownerTasks?.length || 0,
+      assigneeTasks: assigneeTasks?.length || 0,
       memberTasks: memberTasks?.length || 0
     });
 
     // Merge, de-dupe by task_id
     const map = new Map();
-    [...(ownerTasks || []), ...(memberTasks || [])].forEach((t) => map.set(t.task_id, t));
+    [...(ownerTasks || []), ...(assigneeTasks || []), ...(memberTasks || [])].forEach((t) => map.set(t.task_id, t));
     return res.json({ data: Array.from(map.values()).map((t) => ({ ...t, status: mapLegacyStatus(t.status) })) });
   }
 
