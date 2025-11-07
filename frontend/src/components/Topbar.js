@@ -1,12 +1,15 @@
 import React from 'react';
-import { AppBar, Avatar, InputBase, Paper, Toolbar, Box } from '@mui/material';
+import { AppBar, Avatar, InputBase, Paper, Toolbar, Box, IconButton } from '@mui/material';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
+import MenuIcon from '@mui/icons-material/Menu';
 import logo from '../logo.jfif';
 import NotificationBell from './NotificationBell';
 import ExportReportButton from './ExportReportButton';
 
 const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:4000/api';
 
-export default function Topbar({ userId }) {
+export default function Topbar({ userId, onMenuClick }) {
   // tolerant parsing of localStorage keys used across app parts
   const rawStored = localStorage.getItem('currentUser') || localStorage.getItem('user') || null;
   let stored = null;
@@ -64,18 +67,23 @@ export default function Topbar({ userId }) {
     }
   }, [currentUser, teamName, deptName]);
 
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
+
   return (
     <AppBar position="sticky" elevation={0} color="transparent" sx={styles.appBar}>
       <Toolbar sx={styles.topToolbar}>
+        <IconButton onClick={onMenuClick} sx={styles.menuButton} aria-label="Open menu">
+          <MenuIcon />
+        </IconButton>
         <Box component="img" src={logo} alt="Logo" sx={styles.logo} />
         <Paper sx={styles.searchPaper}>
           <InputBase placeholder="Search…" sx={styles.searchInput} />
         </Paper>
 
-        {/* role-based report buttons */}
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mr: 1 }}>
-          {/* Team report: only for MANAGER */}
-          {role === 'MANAGER' && currentUser?.team_id && (
+        {/* Team report should always be visible on all breakpoints (if eligible) */}
+        {role === 'MANAGER' && currentUser?.team_id && (
+          <Box sx={{ display: 'inline-flex', alignItems: 'center', mr: 1, flexShrink: 0 }}>
             <ExportReportButton
               scope="team"
               id={currentUser.team_id}
@@ -83,9 +91,14 @@ export default function Topbar({ userId }) {
               actingUserId={actingUserId}
               label="Team Report"
             />
-          )}
+          </Box>
+        )}
 
-          {/* Department report: only for DIRECTOR or HR */}
+        {/* Other report buttons hidden on small screens */}
+        <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 1, alignItems: 'center', mr: 1 }}>
+
+          {/* Department report: only for DIRECTOR or HR */
+          }
           {(role === 'DIRECTOR') && currentUser?.department_id && (
             <ExportReportButton
               scope="department"
@@ -118,18 +131,19 @@ const styles = {
     backdropFilter: 'blur(4px)',
     borderBottom: '1px solid #ede7ff',
     backgroundColor: 'rgba(255,255,255,0.85)',
-    mx: 2,
-    mb: 2,
+    mx: { xs: 1, sm: 2 },
+    mb: { xs: 1, sm: 2 },
     borderRadius: 3,
     boxShadow: '0 8px 24px rgba(78,84,200,0.12)',
     overflow: 'hidden',
-    width: 'calc(100% - 32px)',
+    width: { xs: 'calc(100% - 16px)', sm: 'calc(100% - 32px)' },
     boxSizing: 'border-box',
-    top: 16,
+    top: { xs: 8, sm: 16 },
   },
-  topToolbar: { gap: 2 },
-  logo: { height: 32, width: 32, borderRadius: 1.5 },
-  searchPaper: { px: 2, py: 0.5, display: 'flex', alignItems: 'center', gap: 1, borderRadius: 2, flex: 1, boxShadow: 'none', border: '1px solid #e8e0ff' },
+  topToolbar: { gap: { xs: 1, sm: 2 } },
+  menuButton: { display: { xs: 'inline-flex', md: 'none' }, mr: 1 },
+  logo: { height: 32, width: 32, borderRadius: 1.5, mr: { xs: 1, sm: 0 } },
+  searchPaper: { px: 2, py: 0.5, display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 1, borderRadius: 2, flex: 1, boxShadow: 'none', border: '1px solid #e8e0ff' },
   searchInput: { flex: 1 },
 };
 

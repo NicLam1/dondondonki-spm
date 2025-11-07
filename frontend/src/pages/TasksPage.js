@@ -26,6 +26,8 @@ import {
   IconButton,
   TextField,
 } from "@mui/material";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
 import Snackbar from "@mui/material/Snackbar";
 import Alert from "@mui/material/Alert";
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -343,6 +345,8 @@ function TaskCard({ task, usersById, onOpen, actingUser, onPriorityUpdate, onAdd
 }
 
 export default function TasksPage() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [selectedUserId, setSelectedUserId] = useState("");
   const [viewUserIds, setViewUserIds] = useState([]);
   const prevActingIdRef = useRef(null);
@@ -866,7 +870,7 @@ const handleTaskCreated = (newTask) => {
       />
 
       <Box sx={styles.main}>
-        <Topbar userId={actingUser?.user_id} />
+        <Topbar userId={actingUser?.user_id} onMenuClick={() => setIsSidebarOpen(true)} />
 
         <Box sx={styles.content}>
           <Container maxWidth={false} disableGutters sx={styles.contentContainer}>
@@ -1002,6 +1006,7 @@ const handleTaskCreated = (newTask) => {
       <Dialog
         open={Boolean(selectedTask)}
         onClose={() => { setSelectedTask(null); setEditMode(false); setDraft(null); }}
+        fullScreen={isMobile}
         fullWidth
         maxWidth="sm"
         PaperProps={{ sx: styles.dialogPaper }}
@@ -1534,37 +1539,43 @@ const styles = {
   flexGrow: { flexGrow: 1 },
 
   main: { flexGrow: 1, display: "flex", flexDirection: "column" },
-  content: { p: 3 },
-  contentContainer: { px: 3 },
+  content: { p: { xs: 1.5, sm: 3 } },
+  contentContainer: { px: { xs: 1, sm: 3 } },
   headerRow: {
     mb: 4,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerTitle: { m: 0, fontWeight: 700, letterSpacing: 0.2, fontSize: "3em" },
+  headerTitle: { m: 0, fontWeight: 700, letterSpacing: 0.2, fontSize: { xs: "1.75rem", sm: "2rem", md: "2.5rem", lg: "3rem" } },
   filtersRow: { mb: 3, display: "flex", gap: 2, flexWrap: "wrap" },
   selectSmall: { width: 280 },
-  selectMedium: { width: 320 },
+  selectMedium: { width: { xs: "100%", sm: 320 } },
   taskSection: { position: "relative", minHeight: 200 },
   columnsWrap: {
     mt: 3,
     display: "flex",
-    gap: "2%",
-    overflowX: "auto",
+    gap: 2,
+    flexWrap: "wrap",
+    overflowX: { xs: "visible", md: "auto" },
     pb: 1,
     alignItems: "flex-start",
-    justifyContent: "flex-start",
+    justifyContent: { xs: "stretch", md: "flex-start" },
     width: "100%",
+    minWidth: 0,
+    px: { xs: 1, sm: 2 },
   },
-  column: { width: 350, flex: "0 0 350px" },
+  column: { 
+    width: { xs: "100%", sm: "calc(50% - 16px)", md: "calc(50% - 16px)", lg: 350 }, 
+    flex: { xs: "1 1 100%", sm: "1 1 calc(50% - 16px)", md: "1 1 calc(50% - 16px)", lg: "0 0 350px" },
+    minWidth: 0,
+  },
   columnPaper: {
-    p: 2,
+    p: { xs: 1.5, sm: 2 },
     borderRadius: 3,
     border: "1px solid #d9d9d9",
     backgroundColor: "#ffffff",
     boxShadow: "0 3px 10px rgba(106,17,203,0.08), 0 1px 0 rgba(106,17,203,0.06)",
-    padding: "24px",
   },
   columnTitle: {
     mb: 1.5,
@@ -1614,9 +1625,9 @@ const styles = {
     textTransform: "none",
     fontWeight: 700,
     borderRadius: 9999,
-    fontSize: "1rem",
-    px: 4.25,
-    py: 1.5,
+    fontSize: { xs: "0.9rem", sm: "1rem" },
+    px: { xs: 3, sm: 4.25 },
+    py: { xs: 1.25, sm: 1.5 },
     background: "linear-gradient(180deg, #6A11CB 0%, #4E54C8 50%, #6A11CB 100%)",
     color: "#ffffff",
     boxShadow: "0 6px 16px rgba(78,84,200,0.24)",

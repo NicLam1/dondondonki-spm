@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Badge, Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography, Button } from '@mui/material';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import MenuOpenIcon from '@mui/icons-material/MenuOpen';
 import MenuIcon from '@mui/icons-material/Menu';
 import DashboardOutlinedIcon from '@mui/icons-material/DashboardOutlined';
@@ -20,6 +22,8 @@ const DEFAULT_SIDEBAR_ITEMS = [
 ];
 
 export default function Sidebar({ open = true, onToggle, title = 'DonkiBoard', onItemClick }) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const navigate = useNavigate();
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const email = user.email || '';
@@ -83,14 +87,18 @@ export default function Sidebar({ open = true, onToggle, title = 'DonkiBoard', o
 
   return (
     <Drawer
-      variant="permanent"
+      variant={isMobile ? 'temporary' : 'permanent'}
+      open={isMobile ? open : true}
+      onClose={isMobile ? onToggle : undefined}
+      ModalProps={isMobile ? { keepMounted: true } : undefined}
       PaperProps={{
         sx: {
           ...styles.drawerPaper,
-          width: open ? SIDEBAR_WIDTH : SIDEBAR_MINI_WIDTH,
+          ...(isMobile ? styles.drawerPaperMobile : {}),
+          width: isMobile ? SIDEBAR_WIDTH : (open ? SIDEBAR_WIDTH : SIDEBAR_MINI_WIDTH),
         },
       }}
-      sx={{ ...styles.drawer, width: open ? SIDEBAR_WIDTH + 16 : SIDEBAR_MINI_WIDTH + 16 }}
+      sx={isMobile ? styles.drawerMobile : { ...styles.drawer, width: open ? SIDEBAR_WIDTH + 16 : SIDEBAR_MINI_WIDTH + 16 }}
     >
       <Toolbar sx={{ ...styles.drawerToolbar, justifyContent: open ? 'space-between' : 'center' }}>
         {open && (
@@ -134,29 +142,32 @@ export default function Sidebar({ open = true, onToggle, title = 'DonkiBoard', o
         ))}
       </List>
       <Box sx={{ flexGrow: 1 }} />
-      <Box sx={{ px: 2, pb: 2, pt: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
-        <Box sx={{ mb: 1, width: '100%' }}>
-          <Typography variant="body2" color="inherit" sx={{ fontWeight: 500, wordBreak: 'break-all' }}>
-            {email}
-          </Typography>
-          <Typography variant="caption" color="inherit" sx={{ opacity: 0.8 }}>
-            {role}
-          </Typography>
+      {(open || isMobile) && (
+        <Box sx={{ px: 2, pb: 2, pt: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.5 }}>
+          <Box sx={{ mb: 1, width: '100%' }}>
+            <Typography variant="body2" color="inherit" sx={{ fontWeight: 500, wordBreak: 'break-all' }}>
+              {email}
+            </Typography>
+            <Typography variant="caption" color="inherit" sx={{ opacity: 0.8 }}>
+              {role}
+            </Typography>
+          </Box>
+          <Divider sx={{ width: '100%', mb: 1 }} />
+          <Button variant="outlined" color="inherit" size="small" fullWidth sx={{ alignSelf: 'center', mb: 1 }} onClick={handleChangePassword}>
+            Change Password
+          </Button>
+          <Button variant="outlined" color="inherit" size="small" fullWidth sx={{ alignSelf: 'center' }} onClick={handleLogout}>
+            Log Out
+          </Button>
         </Box>
-        <Divider sx={{ width: '100%', mb: 1 }} />
-        <Button variant="outlined" color="inherit" size="small" fullWidth sx={{ alignSelf: 'center', mb: 1 }} onClick={handleChangePassword}>
-          Change Password
-        </Button>
-        <Button variant="outlined" color="inherit" size="small" fullWidth sx={{ alignSelf: 'center' }} onClick={handleLogout}>
-          Log Out
-        </Button>
-      </Box>
+      )}
     </Drawer>
   );
 }
 
 const styles = {
   drawer: { flexShrink: 0, '& .MuiDrawer-paper': { boxSizing: 'border-box' } },
+  drawerMobile: { flexShrink: 0 },
   drawerPaper: {
     transition: 'width 200ms ease',
     overflowX: 'hidden',
@@ -168,6 +179,12 @@ const styles = {
     height: 'calc(100vh - 32px)',
     borderRadius: 3,
     boxShadow: '0 8px 24px rgba(78,84,200,0.28)',
+  },
+  drawerPaperMobile: {
+    ml: 0,
+    my: 0,
+    height: '100vh',
+    borderRadius: 0,
   },
   drawerToolbar: { display: 'flex', alignItems: 'center' },
   brandTitle: { fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 },

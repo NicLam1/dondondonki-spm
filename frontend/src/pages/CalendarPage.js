@@ -2,6 +2,8 @@ import "../App.css";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Alert, Box, Button, Container, IconButton, Paper, Tooltip, Typography } from "@mui/material";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import DashboardIcon from "@mui/icons-material/Dashboard";
@@ -18,6 +20,8 @@ import TodayIcon from "@mui/icons-material/Today";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 export default function CalendarPage() {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -178,6 +182,16 @@ export default function CalendarPage() {
     month: "long",
     year: "numeric",
   });
+  const [selectedDate, setSelectedDate] = useState(null);
+  useEffect(() => {
+    if (!isMobile) return;
+    const isSameMonth =
+      today.getFullYear() === currentMonth.getFullYear() &&
+      today.getMonth() === currentMonth.getMonth();
+    setSelectedDate(isSameMonth ? new Date(today.getFullYear(), today.getMonth(), today.getDate()) : null);
+  }, [isMobile, currentMonth, today]);
+  const selectedDateKey = useMemo(() => (selectedDate ? selectedDate.toISOString().slice(0, 10) : null), [selectedDate]);
+  const selectedTasks = useMemo(() => (selectedDateKey ? (deadlinesByDate.get(selectedDateKey) || []) : []), [selectedDateKey, deadlinesByDate]);
   const sidebarItems = [
     { key: "dashboard", icon: <DashboardIcon />, label: "Dashboard" },
     { key: "tasks", icon: <TaskIcon />, label: "Tasks" },
@@ -205,7 +219,7 @@ export default function CalendarPage() {
       />
       <Box sx={{ flexGrow: 1, display: "flex", flexDirection: "column" }}>
         <Topbar onMenuClick={() => setIsSidebarOpen((value) => !value)} userId={actingUserId} />
-        <Box sx={{ flexGrow: 1, py: 4 }}>
+        <Box sx={{ flexGrow: 1, py: { xs: 2, sm: 4 } }}>
           <Container maxWidth="lg">
             <Box sx={styles.headerRow}>
               <Typography variant="h5" sx={{ fontWeight: 600 }}>
@@ -261,42 +275,81 @@ export default function CalendarPage() {
                       borderColor: isToday ? "primary.main" : "divider",
                       boxShadow: isToday ? "0 0 0 1px inset rgba(25, 118, 210, 0.35)" : "none",
                       backgroundColor: isToday ? "rgba(25, 118, 210, 0.08)" : "transparent",
+                      ...(isMobile && selectedDateKey === date.toISOString().slice(0, 10)
+                        ? { borderColor: 'primary.main', boxShadow: '0 0 0 1px inset rgba(25,118,210,0.35)' }
+                        : {}),
+                      ...(isMobile ? { cursor: 'pointer' } : {}),
                     }}
+                    onClick={isMobile ? () => setSelectedDate(new Date(date)) : undefined}
                   >
                     <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
                       {date.getDate()}
                     </Typography>
-                    <Box sx={styles.tasksList}>
-                      {tasks.map((task) => (
-                        <Tooltip
-                          key={task.task_id}
-                          arrow
-                          placement="top"
-                          title={
-                            <Box sx={styles.tooltipContent}>
-                              <Typography sx={styles.tooltipTitle}>{task.title}</Typography>
-                              <Typography sx={styles.tooltipLine}>
-                                Priority: {formatPriority(task.priority_bucket)}
-                              </Typography>
-                              <Typography sx={styles.tooltipLine}>
-                                Role: {formatRoles(task.roles)}
-                              </Typography>
-                            </Box>
-                          }
-                        >
-                          <Typography
-                            variant="caption"
-                            sx={styles.taskChip}
+                    {isMobile ? (
+                      <Box sx={styles.mobileDots}>
+                        {Array.from({ length: Math.min(tasks.length, 3) }).map((_, idx) => (
+                          <Box key={idx} sx={styles.mobileDot} />
+                        ))}
+                        {tasks.length > 3 && (
+                          <Typography variant="caption" sx={styles.mobileMore}>+{tasks.length - 3}</Typography>
+                        )}
+                      </Box>
+                    ) : (
+                      <Box sx={styles.tasksList}>
+                        {tasks.map((task) => (
+                          <Tooltip
+                            key={task.task_id}
+                            arrow
+                            placement="top"
+                            title={
+                              <Box sx={styles.tooltipContent}>
+                                <Typography sx={styles.tooltipTitle}>{task.title}</Typography>
+                                <Typography sx={styles.tooltipLine}>
+                                  Priority: {formatPriority(task.priority_bucket)}
+                                </Typography>
+                                <Typography sx={styles.tooltipLine}>
+                                  Role: {formatRoles(task.roles)}
+                                </Typography>
+                              </Box>
+                            }
                           >
-                            {formatTaskTitle(task.title)}
-                          </Typography>
-                        </Tooltip>
-                      ))}
-                      {!tasks.length && <Box sx={styles.noTaskPlaceholder} />}
-                    </Box>
+                            <Typography
+                              variant="caption"
+                              sx={styles.taskChip}
+                            >
+                              {formatTaskTitle(task.title)}
+                            </Typography>
+                          </Tooltip>
+                        ))}
+                        {!tasks.length && <Box sx={styles.noTaskPlaceholder} />}
+                      </Box>
+                    )}
                   </Paper>
                 ))}
               </Box>
+              {isMobile && (
+                <Paper elevation={0} sx={styles.mobileAgenda}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5 }}>
+                    {selectedDate
+                      ? selectedDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })
+                      : 'Select a date'}
+                  </Typography>
+                  {selectedTasks && selectedTasks.length ? (
+                    selectedTasks.map((task) => (
+                      <Box key={task.task_id} sx={styles.mobileAgendaItem}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {formatTaskTitle(task.title)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Priority {formatPriority(task.priority_bucket)} • {formatRoles(task.roles)}
+                        </Typography>
+                      </Box>
+                    ))
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">No tasks</Typography>
+                  )}
+                </Paper>
+              )}
               {deadlinesError && (
                 <Alert severity="error" sx={{ mt: 2 }}>
                   {deadlinesError}
@@ -316,9 +369,10 @@ export default function CalendarPage() {
 }
 const styles = {
   calendarCard: {
-    p: 2,
+    p: { xs: 1.5, sm: 2 },
     borderRadius: 3,
     background: "white",
+    overflowX: 'auto',
   },
   headerRow: {
     display: "flex",
@@ -341,10 +395,11 @@ const styles = {
     mb: 1,
     color: "text.secondary",
     fontWeight: 600,
+    minWidth: { xs: 840, md: 0 },
   },
   weekdayCell: {
     py: 1,
-    fontSize: 13,
+    fontSize: { xs: 12, sm: 13 },
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
@@ -352,13 +407,14 @@ const styles = {
     display: "grid",
     gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
     gap: 1,
+    minWidth: { xs: 840, md: 0 },
   },
   dayCell: {
-    minHeight: 96,
+    minHeight: { xs: 88, sm: 96 },
     borderRadius: 2,
     border: "1px solid",
     borderColor: "divider",
-    p: 1,
+    p: { xs: 0.75, sm: 1 },
     display: "flex",
     flexDirection: "column",
     alignItems: "flex-start",
@@ -371,6 +427,9 @@ const styles = {
     width: "100%",
     overflow: "hidden",
   },
+  mobileDots: { display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 12 },
+  mobileDot: { width: 6, height: 6, borderRadius: '50%', backgroundColor: 'primary.main', opacity: 0.9 },
+  mobileMore: { ml: 0.5, color: 'text.secondary' },
   taskChip: {
     display: "block",
     width: "100%",
@@ -378,8 +437,8 @@ const styles = {
     backgroundColor: "rgba(25,118,210,0.08)",
     color: "rgba(25,118,210,0.95)",
     borderRadius: 1,
-    px: 0.75,
-    py: 0.5,
+    px: { xs: 0.5, sm: 0.75 },
+    py: { xs: 0.4, sm: 0.5 },
     lineHeight: 1.2,
     typography: "caption",
     overflow: "hidden",
@@ -405,4 +464,6 @@ const styles = {
     fontSize: 13,
     color: "rgba(255,255,255,0.85)",
   },
+  mobileAgenda: { mt: 2, p: 1.5, borderTop: '1px solid', borderColor: 'divider' },
+  mobileAgendaItem: { p: 1, borderRadius: 1, backgroundColor: 'rgba(25,118,210,0.04)', '&:not(:last-of-type)': { mb: 0.75 } },
 };
