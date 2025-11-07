@@ -1211,33 +1211,6 @@ const handleTaskCreated = (newTask) => {
                 <Stack direction="row" spacing={2} sx={styles.dialogInfoRow}>
                   <Box sx={styles.dialogInfoItem}>
                     <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                      Owner
-                    </Typography>
-                    {editMode ? (
-                      <FormControl fullWidth size="small">
-                        <Select
-                          value={draft?.owner_id ?? selectedTask.owner_id}
-                          onChange={(e) => {
-                            const next = Number(e.target.value);
-                            setDraft((d) => ({ ...d, owner_id: Number.isInteger(next) ? next : selectedTask.owner_id }));
-                          }}
-                          renderValue={(val) => usersById.get(Number(val))?.full_name || "—"}
-                        >
-                          {allowedUsers.map((u) => (
-                            <MenuItem key={u.user_id} value={String(u.user_id)}>
-                              <ListItemText primary={`${u.full_name} (${u.role})`} />
-                            </MenuItem>
-                          ))}
-                        </Select>
-                      </FormControl>
-                    ) : (
-                      <Typography variant="body2" sx={styles.dialogInfoValue}>
-                        {usersById.get(selectedTask.owner_id)?.full_name || "—"}
-                      </Typography>
-                    )}
-                  </Box>
-                  <Box sx={styles.dialogInfoItem}>
-                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
                       Assignee
                     </Typography>
                     {editMode ? (
