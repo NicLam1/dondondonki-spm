@@ -220,7 +220,11 @@ async function logReminder(taskId, userId, dueDate, reminderNumber, daysBefore) 
 
 module.exports = {
   checkAndSendReminders,
-  checkAndSendOverdueNotifications
+  checkAndSendOverdueNotifications,
+  shouldSendReminderNow,
+  createReminderMessage,
+  escapeHtml,
+  logReminder,
 };
 
 // Additional policy-based notifications independent of task_reminders rows

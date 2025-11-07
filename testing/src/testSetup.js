@@ -19,13 +19,6 @@ jest.mock('../../backend/src/services/email', () => ({
   sendMail: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('../../backend/src/services/queue', () => ({
-  inAppNotificationsQueue: {
-    add: jest.fn().mockResolvedValue(undefined),
-  },
-  createNotificationWorker: jest.fn(() => jest.fn()),
-}));
-
 jest.mock('../../backend/src/services/activityLog.js', () => {
   const actual = jest.requireActual('../../backend/src/services/activityLog.js');
   return {

@@ -250,8 +250,9 @@ describe('POST /api/tasks', () => {
 
   test('creates a task with assignee and triggers reassignment activity + email', async () => {
     global.supabaseMock.tables.users.push(
-      { user_id: 1, access_level: 2 },
-      { user_id: 2, access_level: 1 }
+      { user_id: 1, access_level: 2, team_id: 1, department_id: 1 },
+      { user_id: 2, access_level: 1, team_id: 1, department_id: 1 },
+      { user_id: 3, access_level: 0, team_id: 1, department_id: 1 }
     );
 
     const response = await request(app)

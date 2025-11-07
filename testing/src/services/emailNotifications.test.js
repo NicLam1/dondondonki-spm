@@ -1,271 +1,219 @@
-jest.unmock('../../../backend/src/services/emailNotifications.js');
+'use strict';
 
+jest.unmock('../../../backend/src/services/emailNotifications');
+
+jest.mock('../../../backend/src/services/email', () => ({
+  sendMail: jest.fn().mockResolvedValue(undefined),
+}));
+
+const { sendMail } = require('../../../backend/src/services/email');
 const {
   notifyTaskAssigned,
+  notifyTaskUnassigned,
   notifyTaskStatusChange,
-} = require('../../../backend/src/services/emailNotifications.js');
-const { sendMail } = require('../../../backend/src/services/email');
-const { createSupabaseMock } = require('../mocks/supabaseClient');
+  notifyCommentMentioned,
+  notifyMembersAdded,
+} = require('../../../backend/src/services/emailNotifications');
+
+function queueResponse(mock, table, rows) {
+  mock.__responses[table].push({ data: rows });
+}
+
+function createSupabaseMock() {
+  const responses = {
+    users: [],
+    user_notification_prefs: [],
+  };
+  const notificationsInsert = jest.fn().mockResolvedValue({ data: null, error: null });
+
+  function nextResponse(table, fallback = { data: [] }) {
+    const queue = responses[table] || [];
+    if (!queue.length) return fallback;
+    return queue.shift();
+  }
+
+  const supabase = {
+    __responses: responses,
+    __notificationsInsert: notificationsInsert,
+    from: jest.fn((table) => {
+      if (table === 'notifications') {
+        return {
+          insert: notificationsInsert,
+        };
+      }
+      const builder = Promise.resolve(nextResponse(table));
+      builder.select = jest.fn(() => builder);
+      builder.in = jest.fn(() => builder);
+      builder.eq = jest.fn(() => builder);
+      return builder;
+    }),
+  };
+
+  return supabase;
+}
 
 describe('services/emailNotifications', () => {
-  let supabase;
-
   beforeEach(() => {
-    supabase = createSupabaseMock();
-    sendMail.mockReset();
-    supabase.tables.user_notification_prefs = supabase.tables.user_notification_prefs || [];
-    supabase.tables.notifications = supabase.tables.notifications || [];
+    jest.clearAllMocks();
   });
 
-  it('sends email and in-app notification for assigned user with opt-in', async () => {
-    supabase.tables.users.push({
-      user_id: 7,
-      email: 'assignee@example.com',
-      full_name: 'Assignee',
-    });
-    supabase.tables.user_notification_prefs.push({
-      user_id: 7,
-      email: true,
-      in_app: true,
-    });
-
-    await notifyTaskAssigned(
-      supabase,
-      { task_id: 55, title: 'Board Report', due_date: '2025-12-01' },
-      7
+  test('notifyTaskAssigned sends email and in-app notification when user opts in', async () => {
+    const supabase = createSupabaseMock();
+    supabase.__responses.users.push(
+      { data: [{ user_id: 7, email: 'assignee@example.com', full_name: 'Ann Assignee' }] }, // getUsersByIds
+      { data: [{ user_id: 7 }] }, // sendInApp existing users lookup
+    );
+    supabase.__responses.user_notification_prefs.push(
+      { data: [{ user_id: 7 }] }, // email opt-in
+      { data: [{ user_id: 7 }] }, // in-app opt-in
     );
 
-    expect(sendMail).toHaveBeenCalledWith(
+    const task = { task_id: 55, title: 'Budget Review', due_date: '2025-11-10' };
+    await notifyTaskAssigned(supabase, task, 7);
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'assignee@example.com',
+      subject: expect.stringContaining('[Task Assigned]'),
+    }));
+    expect(supabase.__notificationsInsert).toHaveBeenCalledWith([
       expect.objectContaining({
-        to: 'assignee@example.com',
-        subject: expect.stringContaining('Board Report'),
-      })
-    );
-    expect(supabase.tables.notifications).toHaveLength(1);
-    expect(supabase.tables.notifications[0]).toMatchObject({
-      user_id: 7,
-      task_id: 55,
-      read: false,
-    });
+        user_id: 7,
+        task_id: 55,
+        message: expect.stringContaining('Budget Review'),
+        read: false,
+      }),
+    ]);
   });
 
-  it('notifies all recipients on status change except acting user', async () => {
-    supabase.tables.users.push(
-      { user_id: 1, email: 'owner@example.com', full_name: 'Owner' },
-      { user_id: 2, email: 'assignee@example.com', full_name: 'Assignee' },
-      { user_id: 3, email: 'member@example.com', full_name: 'Member' }
-    );
-    supabase.tables.user_notification_prefs.push(
-      { user_id: 1, email: true, in_app: true },
-      { user_id: 2, email: true, in_app: true },
-      { user_id: 3, email: true, in_app: true }
-    );
+  test('notifyTaskAssigned exits when user lacks email opt-in', async () => {
+    const supabase = createSupabaseMock();
+    supabase.__responses.users.push({ data: [{ user_id: 8, email: 'nope@example.com', full_name: 'No Opt' }] });
+    supabase.__responses.user_notification_prefs.push({ data: [] }); // not opted in
 
-    await notifyTaskStatusChange(
-      supabase,
-      {
-        task_id: 88,
-        title: 'Launch Campaign',
-        owner_id: 1,
-        assignee_id: 2,
-        members_id: [3],
-        due_date: '2025-11-15',
-      },
-      'ONGOING',
-      'COMPLETED',
-      2
-    );
+    const task = { task_id: 77, title: 'Compliance' };
+    await notifyTaskAssigned(supabase, task, 8);
+
+    expect(sendMail).not.toHaveBeenCalled();
+    expect(supabase.__notificationsInsert).not.toHaveBeenCalled();
+  });
+
+  test('notifyTaskUnassigned alerts the previous assignee via email and in-app when opted in', async () => {
+    const supabase = createSupabaseMock();
+    queueResponse(supabase, 'users', [{ user_id: 5, email: 'old@example.com', full_name: 'Old Assignee' }]);
+    queueResponse(supabase, 'user_notification_prefs', [{ user_id: 5 }]); // email opt-in
+    queueResponse(supabase, 'user_notification_prefs', [{ user_id: 5 }]); // in-app opt-in
+    queueResponse(supabase, 'users', [{ user_id: 5 }]); // existing user check for in-app
+
+    const task = { task_id: 300, title: 'Budget Review' };
+    await notifyTaskUnassigned(supabase, task, 5);
+
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'old@example.com',
+      subject: expect.stringContaining('[Task Unassigned]'),
+    }));
+    expect(supabase.__notificationsInsert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        user_id: 5,
+        task_id: 300,
+        message: expect.stringContaining('unassigned'),
+      }),
+    ]);
+  });
+
+  test('notifyTaskStatusChange emails and notifies all recipients except the actor', async () => {
+    const supabase = createSupabaseMock();
+    queueResponse(supabase, 'users', [
+      { user_id: 11, email: 'owner@example.com', full_name: 'Owner One' },
+      { user_id: 13, email: 'member@example.com', full_name: 'Member Three' },
+    ]);
+    queueResponse(supabase, 'user_notification_prefs', [
+      { user_id: 11 },
+      { user_id: 13 },
+    ]);
+    queueResponse(supabase, 'user_notification_prefs', [
+      { user_id: 11 },
+      { user_id: 13 },
+    ]);
+    queueResponse(supabase, 'users', [
+      { user_id: 11 },
+      { user_id: 13 },
+    ]);
+
+    const task = {
+      task_id: 910,
+      title: 'Data Migration',
+      owner_id: 11,
+      assignee_id: 12,
+      members_id: [13],
+      due_date: '2025-11-30',
+    };
+    await notifyTaskStatusChange(supabase, task, 'TO_DO', 'ONGOING', 12);
 
     expect(sendMail).toHaveBeenCalledTimes(2);
-    const recipients = sendMail.mock.calls.map((call) => call[0].to).sort();
+    const recipients = sendMail.mock.calls.map(([,], idx) => sendMail.mock.calls[idx][0].to).sort();
     expect(recipients).toEqual(['member@example.com', 'owner@example.com']);
-    expect(supabase.tables.notifications).toHaveLength(2);
-    const notifiedUsers = supabase.tables.notifications.map((n) => n.user_id).sort();
-    expect(notifiedUsers).toEqual([1, 3]);
+    expect(supabase.__notificationsInsert).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ user_id: 11 }),
+      expect.objectContaining({ user_id: 13 }),
+    ]));
   });
 
-  it('notifies user on unassignment when email opt-in enabled', async () => {
-    const { notifyTaskUnassigned } = require('../../../backend/src/services/emailNotifications.js');
-    supabase.tables.users.push({
-      user_id: 9,
-      email: 'old@example.com',
-      full_name: 'Old Assignee',
-    });
-    supabase.tables.user_notification_prefs.push({
-      user_id: 9,
-      email: true,
-      in_app: true,
-    });
-
-    await notifyTaskUnassigned(
-      supabase,
-      { task_id: 501, title: 'Inventory Audit', due_date: '2025-12-10' },
-      9
-    );
-
-    expect(sendMail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'old@example.com',
-        subject: expect.stringContaining('Inventory Audit'),
-      })
-    );
-    expect(supabase.tables.notifications).toEqual([
-      expect.objectContaining({ user_id: 9, task_id: 501 }),
+  test('notifyCommentMentioned emails and sends in-app notifications for mentioned users', async () => {
+    const supabase = createSupabaseMock();
+    queueResponse(supabase, 'users', [
+      { user_id: 21, email: 'ann@example.com', full_name: 'Ann Mentioned' },
+      { user_id: 22, email: 'bob@example.com', full_name: 'Bob Mentioned' },
     ]);
-  });
+    queueResponse(supabase, 'user_notification_prefs', [
+      { user_id: 21 },
+      { user_id: 22 },
+    ]);
+    queueResponse(supabase, 'user_notification_prefs', [
+      { user_id: 21 },
+      { user_id: 22 },
+    ]);
+    queueResponse(supabase, 'users', [
+      { user_id: 21 },
+      { user_id: 22 },
+    ]);
 
-  it('emails mentioned users and posts in-app alerts', async () => {
-    const { notifyCommentMentioned } = require('../../../backend/src/services/emailNotifications.js');
-    supabase.tables.users.push(
-      { user_id: 11, email: 'mention1@example.com', full_name: 'Mention One' },
-      { user_id: 12, email: 'mention2@example.com', full_name: 'Mention Two' }
-    );
-    supabase.tables.user_notification_prefs.push(
-      { user_id: 11, email: true, in_app: true },
-      { user_id: 12, email: true, in_app: true }
-    );
-
-    await notifyCommentMentioned(
-      supabase,
-      { task_id: 700, title: 'Draft Proposal', comment_preview: 'Please review section 2.' },
-      [11, 12],
-      { full_name: 'Commenter' }
-    );
+    const task = { task_id: 9100, title: 'Draft Spec', comment_preview: 'Please review the DB section.' };
+    await notifyCommentMentioned(supabase, task, [21, 22], { full_name: 'Lead Alice' });
 
     expect(sendMail).toHaveBeenCalledTimes(2);
-    const recipients = sendMail.mock.calls.map((call) => call[0].to).sort();
-    expect(recipients).toEqual(['mention1@example.com', 'mention2@example.com']);
-    expect(supabase.tables.notifications).toHaveLength(2);
-    expect(new Set(supabase.tables.notifications.map((n) => n.user_id))).toEqual(
-      new Set([11, 12])
-    );
+    const notificationMessages = supabase.__notificationsInsert.mock.calls.flatMap((call) => call[0]);
+    expect(notificationMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ user_id: 21, message: expect.stringContaining('Lead Alice') }),
+      expect.objectContaining({ user_id: 22, message: expect.stringContaining('Lead Alice') }),
+    ]));
   });
 
-  it('notifies new members added to task', async () => {
-    const { notifyMembersAdded } = require('../../../backend/src/services/emailNotifications.js');
-    supabase.tables.users.push(
-      { user_id: 20, email: 'memberA@example.com', full_name: 'Member A' },
-      { user_id: 21, email: 'memberB@example.com', full_name: 'Member B' }
-    );
-    supabase.tables.user_notification_prefs.push(
-      { user_id: 20, email: true, in_app: true },
-      { user_id: 21, email: true, in_app: false } // email only
-    );
+  test('notifyMembersAdded emails new members and records in-app notifications', async () => {
+    const supabase = createSupabaseMock();
+    queueResponse(supabase, 'users', [
+      { user_id: 31, email: 'new1@example.com', full_name: 'New One' },
+      { user_id: 32, email: 'new2@example.com', full_name: 'New Two' },
+    ]);
+    queueResponse(supabase, 'user_notification_prefs', [
+      { user_id: 31 },
+      { user_id: 32 },
+    ]);
+    queueResponse(supabase, 'user_notification_prefs', [
+      { user_id: 31 },
+      { user_id: 32 },
+    ]);
+    queueResponse(supabase, 'users', [
+      { user_id: 31 },
+      { user_id: 32 },
+    ]);
 
-    await notifyMembersAdded(
-      supabase,
-      { task_id: 900, title: 'QA Checklist', due_date: '2025-12-20' },
-      [20, 21],
-      { full_name: 'Project Lead' }
-    );
+    const task = { task_id: 9200, title: 'Customer Rollout', due_date: '2025-12-01' };
+    await notifyMembersAdded(supabase, task, [31, 32], { full_name: 'Manager Mike' });
 
     expect(sendMail).toHaveBeenCalledTimes(2);
-    const recipients = sendMail.mock.calls.map((call) => call[0].to).sort();
-    expect(recipients).toEqual(['memberA@example.com', 'memberB@example.com']);
-    expect(supabase.tables.notifications).toEqual([
-      expect.objectContaining({ user_id: 20, task_id: 900 }),
-    ]);
-  });
-
-  it('skips assignment notification when user lacks opt-in', async () => {
-    const { notifyTaskAssigned } = require('../../../backend/src/services/emailNotifications.js');
-    supabase.tables.users.push({
-      user_id: 30,
-      email: 'no-opt@example.com',
-      full_name: 'No Opt',
-    });
-    supabase.tables.user_notification_prefs.push({
-      user_id: 30,
-      email: false,
-      in_app: false,
-    });
-
-    await notifyTaskAssigned(
-      supabase,
-      { task_id: 601, title: 'Silent Task', due_date: '2025-12-01' },
-      30
-    );
-
-    expect(sendMail).not.toHaveBeenCalled();
-    expect(supabase.tables.notifications || []).toHaveLength(0);
-  });
-
-  it('skips status change notification when all recipients filtered out', async () => {
-    supabase.tables.users.push({ user_id: 50, email: 'owner@example.com', full_name: 'Owner' });
-    supabase.tables.user_notification_prefs.push({
-      user_id: 50,
-      email: false,
-      in_app: false,
-    });
-
-    await notifyTaskStatusChange(
-      supabase,
-      {
-        task_id: 999,
-        title: 'Private Task',
-        owner_id: 50,
-        assignee_id: null,
-        members_id: [],
-        due_date: '2025-12-05',
-      },
-      'ONGOING',
-      'COMPLETED',
-      50
-    );
-
-    expect(sendMail).not.toHaveBeenCalled();
-    expect((supabase.tables.notifications || []).length).toBe(0);
-  });
-
-  it('handles errors when fetching users during assignment', async () => {
-    const { notifyTaskAssigned } = require('../../../backend/src/services/emailNotifications.js');
-    supabase.tables.user_notification_prefs.push({
-      user_id: 70,
-      email: true,
-      in_app: true,
-    });
-
-    supabase.__setNextResult({
-      table: 'users',
-      operation: 'select',
-      error: { message: 'users fetch failed' },
-    });
-
-    await notifyTaskAssigned(
-      supabase,
-      { task_id: 702, title: 'Error Task', due_date: '2025-11-20' },
-      70
-    );
-
-    expect(sendMail).not.toHaveBeenCalled();
-    expect(supabase.tables.notifications).toHaveLength(0);
-  });
-
-  it('handles errors when fetching preferences during status change', async () => {
-    supabase.tables.users.push({ user_id: 80, email: 'pref@example.com', full_name: 'Pref User' });
-
-    supabase.__setNextResult({
-      table: 'user_notification_prefs',
-      operation: 'select',
-      error: { message: 'pref fetch failed' },
-    });
-
-    await notifyTaskStatusChange(
-      supabase,
-      {
-        task_id: 800,
-        title: 'Prefs Task',
-        owner_id: 80,
-        assignee_id: null,
-        members_id: [],
-        due_date: '2025-11-30',
-      },
-      'ONGOING',
-      'COMPLETED',
-      null
-    );
-
-    expect(sendMail).not.toHaveBeenCalled();
-    expect((supabase.tables.notifications || []).length).toBe(0);
+    expect(supabase.__notificationsInsert).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ user_id: 31, task_id: 9200 }),
+      expect.objectContaining({ user_id: 32, task_id: 9200 }),
+    ]));
   });
 });

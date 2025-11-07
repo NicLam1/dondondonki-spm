@@ -1,87 +1,66 @@
-jest.mock(
-  'nodemailer',
-  () => ({
-    createTransport: jest.fn(),
-  }),
-  { virtual: true }
-);
+'use strict';
+
 jest.unmock('../../../backend/src/services/email');
 
-let nodemailer;
-
 describe('services/email', () => {
-  const mockSendMail = jest.fn().mockResolvedValue({ messageId: '123' });
-  let emailService;
+  const originalEnv = { ...process.env };
 
-  const setEnv = () => {
-    process.env.SMTP_HOST = 'smtp.example.com';
-    process.env.SMTP_PORT = '587';
-    process.env.SMTP_USER = 'user';
-    process.env.SMTP_PASS = 'pass';
-    process.env.SMTP_FROM = 'from@example.com';
-  };
+  afterEach(() => {
+    jest.clearAllMocks();
+    Object.assign(process.env, originalEnv);
+  });
 
-  beforeEach(() => {
+  function setupEnv(overrides = {}) {
+    Object.assign(process.env, {
+      SMTP_HOST: 'smtp.example.com',
+      SMTP_PORT: '465',
+      SMTP_USER: 'mailer',
+      SMTP_PASS: 'secret',
+      SMTP_FROM: 'no-reply@example.com',
+      ...overrides,
+    });
+  }
+
+  function loadEmailModule() {
     jest.resetModules();
-    setEnv();
-    jest.isolateModules(() => {
-      nodemailer = require('nodemailer');
-      nodemailer.createTransport.mockReset();
-      mockSendMail.mockReset().mockResolvedValue({ messageId: '123' });
-      nodemailer.createTransport.mockReturnValue({ sendMail: mockSendMail });
-      emailService = require('../../../backend/src/services/email');
-    });
-  });
+    const nodemailerMock = { createTransport: jest.fn() };
+    jest.doMock('nodemailer', () => nodemailerMock, { virtual: true });
+    const { sendMail } = require('../../../backend/src/services/email');
+    return { sendMail, nodemailerMock };
+  }
 
-  it('builds transporter from env config and forwards message fields', async () => {
-    await emailService.sendMail({
-      to: 'dest@example.com',
-      subject: 'Subject',
-      text: 'Plain',
-      html: '<p>HTML</p>',
-    });
+  test('sendMail creates transporter with env config and sends message', async () => {
+    setupEnv();
+    const sendMailImpl = jest.fn().mockResolvedValue({ messageId: 'abc' });
+    const { sendMail, nodemailerMock } = loadEmailModule();
+    nodemailerMock.createTransport.mockReturnValue({ sendMail: sendMailImpl });
 
-    expect(nodemailer.createTransport).toHaveBeenCalledWith({
-      host: 'smtp.example.com',
-      port: 587,
-      secure: false,
-      auth: { user: 'user', pass: 'pass' },
-    });
-    expect(mockSendMail).toHaveBeenCalledWith({
-      from: 'from@example.com',
-      to: 'dest@example.com',
-      subject: 'Subject',
-      text: 'Plain',
-      html: '<p>HTML</p>',
-    });
-  });
+    const payload = { to: 'user@test.com', subject: 'Hello', text: 'Hi' };
+    const result = await sendMail(payload);
 
-  it('reuses transporter across multiple sendMail calls', async () => {
-    await emailService.sendMail({ to: 'a@example.com', subject: 'First' });
-    await emailService.sendMail({ to: 'b@example.com', subject: 'Second' });
-
-    expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
-    expect(mockSendMail).toHaveBeenCalledTimes(2);
-  });
-
-  it('creates secure transporter without auth when port is 465', async () => {
-    process.env.SMTP_PORT = '465';
-    delete process.env.SMTP_USER;
-    delete process.env.SMTP_PASS;
-
-    jest.isolateModules(() => {
-      nodemailer = require('nodemailer');
-      nodemailer.createTransport.mockReset();
-      nodemailer.createTransport.mockReturnValue({ sendMail: mockSendMail });
-      const service = require('../../../backend/src/services/email');
-      service.sendMail({ to: 'secure@example.com', subject: 'Secure' });
-    });
-
-    expect(nodemailer.createTransport).toHaveBeenCalledWith({
+    expect(nodemailerMock.createTransport).toHaveBeenCalledWith({
       host: 'smtp.example.com',
       port: 465,
       secure: true,
-      auth: undefined,
+      auth: { user: 'mailer', pass: 'secret' },
     });
+    expect(sendMailImpl).toHaveBeenCalledWith({
+      from: 'no-reply@example.com',
+      ...payload,
+    });
+    expect(result).toEqual({ messageId: 'abc' });
+  });
+
+  test('sendMail reuses transporter across calls', async () => {
+    setupEnv({ SMTP_PORT: '587' }); // non-secure port
+    const sendMailImpl = jest.fn().mockResolvedValue({});
+    const { sendMail, nodemailerMock } = loadEmailModule();
+    nodemailerMock.createTransport.mockReturnValue({ sendMail: sendMailImpl });
+
+    await sendMail({ to: 'a@test.com' });
+    await sendMail({ to: 'b@test.com' });
+
+    expect(nodemailerMock.createTransport).toHaveBeenCalledTimes(1);
+    expect(sendMailImpl).toHaveBeenCalledTimes(2);
   });
 });

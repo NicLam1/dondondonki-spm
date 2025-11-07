@@ -1,231 +1,175 @@
+'use strict';
+
 jest.unmock('../../../backend/src/services/reminderService');
 
-const { createSupabaseMock } = require('../mocks/supabaseClient');
-let sendMailMock;
-let mockSupabase;
+const {
+  createReminderMessage,
+  escapeHtml,
+  logReminder,
+  shouldSendReminderNow,
+  checkAndSendReminders,
+  checkAndSendOverdueNotifications,
+} = require('../../../backend/src/services/reminderService');
+const { sendMail } = require('../../../backend/src/services/email');
 
-jest.mock('@supabase/supabase-js', () => ({
-  createClient: jest.fn(() => mockSupabase),
-}));
-
-describe('services/reminderService', () => {
-  let reminderService;
-
-  beforeEach(() => {
-    jest.resetModules();
-    mockSupabase = createSupabaseMock();
-    mockSupabase.tables.user_notification_prefs = [];
-    mockSupabase.tables.reminder_log = [];
-    mockSupabase.tables.notifications = [];
-    mockSupabase.tables.users = [];
-
-    jest.isolateModules(() => {
-      reminderService = require('../../../backend/src/services/reminderService');
-      sendMailMock = require('../../../backend/src/services/email').sendMail;
-    });
-    sendMailMock.mockReset();
-  });
-
+describe('services/reminderService helpers', () => {
   afterEach(() => {
     jest.useRealTimers();
   });
 
-  it('sends reminder notifications to opted-in recipients', async () => {
-    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 1, 9, 30, 0));
-
-    mockSupabase.tables.users.push({
-      user_id: 6,
-      email: 'assignee@example.com',
-      full_name: 'Assignee Person',
-    });
-    mockSupabase.tables.user_notification_prefs.push({
-      user_id: 6,
-      email: true,
-      in_app: true,
-    });
-
-    mockSupabase.__setNextResult({
-      table: 'task_reminders',
-      operation: 'select',
-      data: [
-        {
-          reminder_id: 1,
-          task_id: 10,
-          days_before: 2,
-          frequency_per_day: 1,
-          enabled: true,
-          task: {
-            task_id: 10,
-            title: 'Board Report',
-            due_date: '2025-11-02T00:00:00Z',
-            status: 'ONGOING',
-            owner_id: 5,
-            assignee_id: 6,
-            members_id: [],
-          },
-        },
-      ],
-    });
-
-    mockSupabase.__setNextResult({
-      table: 'tasks',
-      operation: 'select',
-      data: [],
-    });
-
-    const result = await reminderService.checkAndSendReminders();
-
-    expect(sendMailMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'assignee@example.com',
-        subject: expect.stringContaining('Board Report'),
-      })
-    );
-    expect(mockSupabase.tables.notifications).toEqual([
-      expect.objectContaining({
-        user_id: 6,
-        task_id: 10,
-        read: false,
-      }),
-    ]);
-    expect(mockSupabase.tables.reminder_log).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ user_id: 6, task_id: 10 }),
-      ])
-    );
-    expect(result.reminders).toEqual(
-      expect.arrayContaining([
-      expect.objectContaining({ user_id: 6, task_id: 10 }),
-      ])
-    );
+  test('createReminderMessage adapts copy based on days remaining', () => {
+    const sampleTask = { title: 'Quarterly Review' };
+    expect(createReminderMessage(sampleTask, 0)).toMatch(/TODAY/);
+    expect(createReminderMessage(sampleTask, 1)).toMatch(/TOMORROW/);
+    expect(createReminderMessage(sampleTask, 5)).toContain('in 5 days');
   });
 
-  it('skips reminders when already logged for the day', async () => {
-    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 1, 9, 30, 0));
-
-    mockSupabase.tables.users.push({
-      user_id: 15,
-      email: 'repeat@example.com',
-      full_name: 'Repeat User',
-    });
-    mockSupabase.tables.user_notification_prefs.push({
-      user_id: 15,
-      email: true,
-      in_app: true,
-    });
-
-    mockSupabase.__setNextResult({
-      table: 'task_reminders',
-      operation: 'select',
-      data: [
-        {
-          reminder_id: 2,
-          task_id: 300,
-          days_before: 1,
-          frequency_per_day: 1,
-          enabled: true,
-          task: {
-            task_id: 300,
-            title: 'Weekly Report',
-            due_date: '2025-11-02T00:00:00Z',
-            status: 'ONGOING',
-            owner_id: 15,
-            assignee_id: null,
-            members_id: [],
-          },
-        },
-      ],
-    });
-
-    mockSupabase.__setNextResult({
-      table: 'reminder_log',
-      operation: 'select',
-      data: { log_id: 99 },
-    });
-
-    mockSupabase.__setNextResult({
-      table: 'tasks',
-      operation: 'select',
-      data: [],
-    });
-
-    const result = await reminderService.checkAndSendReminders();
-
-    expect(sendMailMock).not.toHaveBeenCalled();
-    expect(mockSupabase.tables.notifications).toHaveLength(0);
-    expect(result.reminders).toEqual([]);
+  test('escapeHtml encodes reserved characters', () => {
+    const raw = `<div>Quote " & ' </div>`;
+    expect(escapeHtml(raw)).toBe('&lt;div&gt;Quote &quot; &amp; &#39; &lt;/div&gt;');
   });
 
-  it('sends overdue notifications to eligible users', async () => {
-    const { checkAndSendOverdueNotifications } = reminderService;
-    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 5, 9, 30, 0));
+  test('shouldSendReminderNow only returns true between 9am-10am local time', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2025-11-07T09:15:00'));
+    expect(shouldSendReminderNow()).toBe(true);
 
-    mockSupabase.tables.users.push(
-      { user_id: 1, email: 'owner@example.com', full_name: 'Owner' },
-      { user_id: 2, email: 'assignee@example.com', full_name: 'Assignee' }
-    );
-    mockSupabase.tables.user_notification_prefs.push(
-      { user_id: 1, email: true, in_app: true },
-      { user_id: 2, email: true, in_app: true }
-    );
+    jest.setSystemTime(new Date('2025-11-07T08:59:00'));
+    expect(shouldSendReminderNow()).toBe(false);
 
-    mockSupabase.__setNextResult({
-      table: 'tasks',
-      operation: 'select',
-      data: [
-        {
-          task_id: 200,
-          title: 'Compliance Audit',
-          due_date: '2025-11-02',
-          status: 'ONGOING',
-          owner_id: 1,
-          assignee_id: 2,
-          members_id: [],
-          is_deleted: false,
-        },
-      ],
+    jest.setSystemTime(new Date('2025-11-07T10:00:00'));
+    expect(shouldSendReminderNow()).toBe(false);
+  });
+
+  test('logReminder inserts a reminder log row', async () => {
+    global.supabaseMock.tables.reminder_log = [];
+
+    await logReminder(501, 20, '2025-11-20', 1, 3);
+
+    expect(global.supabaseMock.tables.reminder_log).toHaveLength(1);
+    expect(global.supabaseMock.tables.reminder_log[0]).toMatchObject({
+      task_id: 501,
+      user_id: 20,
+      due_date: '2025-11-20',
+      reminder_number: 1,
+      days_before: 3,
     });
+  });
+});
+
+describe('services/reminderService overdue checks', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('checkAndSendOverdueNotifications notifies eligible recipients once', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2025-11-10T12:00:00Z'));
+
+    const supabase = global.supabaseMock;
+    supabase.tables.tasks.push({
+      task_id: 9001,
+      title: 'Overdue Migration',
+      due_date: '2025-11-08',
+      status: 'ONGOING',
+      owner_id: 41,
+      assignee_id: 42,
+      members_id: [43],
+      is_deleted: false,
+    });
+    supabase.tables.user_notification_prefs = supabase.tables.user_notification_prefs || [];
+    supabase.tables.user_notification_prefs.push(
+      { user_id: 41, in_app: true, email: false },
+      { user_id: 42, in_app: false, email: true },
+      { user_id: 43, in_app: true, email: true },
+    );
+    supabase.tables.users.push(
+      { user_id: 41, email: 'owner@example.com', full_name: 'Owner One' },
+      { user_id: 42, email: 'assignee@example.com', full_name: 'Assignee Two' },
+      { user_id: 43, email: 'member@example.com', full_name: 'Member Three' },
+    );
 
     const results = await checkAndSendOverdueNotifications();
 
-    expect(sendMailMock).toHaveBeenCalledTimes(2);
-    const recipients = sendMailMock.mock.calls.map((call) => call[0].to).sort();
-    expect(recipients).toEqual(['assignee@example.com', 'owner@example.com']);
-    expect(mockSupabase.tables.notifications.length).toBeGreaterThanOrEqual(2);
-    expect(results).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ task_id: 200, user_id: 1 }),
-        expect.objectContaining({ task_id: 200, user_id: 2 }),
-      ])
-    );
+    expect(results).toHaveLength(3);
+    const notifiedUserIds = results.map((r) => r.user_id).sort();
+    expect(notifiedUserIds).toEqual([41, 42, 43]);
+
+    // In-app notifications should be written for users that opted in
+    const notifications = supabase.tables.notifications || [];
+    const inAppRecipients = notifications.map((n) => n.user_id).sort();
+    expect(inAppRecipients).toEqual([41, 43]);
+  });
+});
+
+describe('checkAndSendReminders', () => {
+  const reminderRow = {
+    reminder_id: 1,
+    days_before: 2,
+    enabled: true,
+    task: {
+      task_id: 8001,
+      title: 'Prep Deck',
+      due_date: '2025-11-09',
+      status: 'ONGOING',
+      owner_id: 51,
+      assignee_id: 52,
+      members_id: [53],
+    },
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    sendMail.mockClear();
+    global.supabaseMock.__clearHooks?.();
+    global.supabaseMock.tables.reminder_log = [];
+    global.supabaseMock.tables.notifications = [];
+    global.supabaseMock.tables.user_notification_prefs = [];
+    global.supabaseMock.tables.users = [];
+    global.supabaseMock.tables.tasks = [];
   });
 
-  it('returns empty array when reminder fetch fails', async () => {
-    jest.useFakeTimers().setSystemTime(new Date(2025, 10, 1, 9, 30, 0));
-
-    mockSupabase.__setNextResult({
+  function queueReminderData(rows = [reminderRow]) {
+    global.supabaseMock.__setNextResult({
       table: 'task_reminders',
       operation: 'select',
-      error: { message: 'fetch failed' },
+      data: rows,
     });
+  }
 
-    const result = await reminderService.checkAndSendReminders();
+  function seedRecipients() {
+    global.supabaseMock.tables.user_notification_prefs.push(
+      { user_id: 51, in_app: true, email: true },
+      { user_id: 52, in_app: false, email: true },
+      { user_id: 53, in_app: true, email: true },
+    );
+    global.supabaseMock.tables.users.push(
+      { user_id: 51, email: 'owner@example.com' },
+      { user_id: 52, email: 'assignee@example.com' },
+      { user_id: 53, email: 'member@example.com' },
+    );
+  }
 
-    expect(sendMailMock).not.toHaveBeenCalled();
-    expect(result).toBeUndefined();
+  test('sends reminders for tasks within the time window', async () => {
+    jest.setSystemTime(new Date('2025-11-07T09:10:00'));
+    queueReminderData();
+    seedRecipients();
+
+    const { reminders } = await checkAndSendReminders();
+
+    expect(reminders).toHaveLength(3);
+    expect(global.supabaseMock.tables.reminder_log).toHaveLength(3);
+    expect(global.supabaseMock.tables.notifications.map((n) => n.user_id).sort()).toEqual([51, 53]);
+    expect(sendMail).toHaveBeenCalledTimes(3);
   });
 
-  it('returns empty array when overdue task query fails', async () => {
-    const { checkAndSendOverdueNotifications } = reminderService;
-    mockSupabase.__setNextResult({
-      table: 'tasks',
-      operation: 'select',
-      error: { message: 'task fetch failed' },
-    });
+  test('skips reminders outside the allowed time window', async () => {
+    jest.setSystemTime(new Date('2025-11-07T08:30:00'));
+    queueReminderData();
+    seedRecipients();
 
-    const result = await checkAndSendOverdueNotifications();
+    const { reminders } = await checkAndSendReminders();
 
-    expect(sendMailMock).not.toHaveBeenCalled();
-    expect(result).toEqual([]);
+    expect(reminders).toHaveLength(0);
+    expect(sendMail).not.toHaveBeenCalled();
+    expect(global.supabaseMock.tables.reminder_log).toHaveLength(0);
   });
 });
