@@ -480,33 +480,6 @@ const handleTaskCreated = (newTask) => {
     return self;
   }, [users, actingUser]);
 
-  // Get available assignees based on access level (for edit mode dropdown)
-  const availableAssignees = useMemo(() => {
-    if (!actingUser || !users.length) return [];
-    const level = typeof actingUser.access_level === 'number' ? actingUser.access_level : 0;
-
-    if (level === 0) return []; // Staff cannot assign
-    if (level === 3) return users; // HR can assign to anyone
-
-    if (level === 1) { // Manager: self + staff in team
-      return users.filter(u => 
-        u.user_id === actingUser.user_id || 
-        (u.access_level === 0 && u.team_id === actingUser.team_id && actingUser.team_id !== null)
-      );
-    }
-
-    if (level === 2) { // Director: self + staff/managers in department
-      return users.filter(u => 
-        u.user_id === actingUser.user_id || 
-        (u.access_level < 2 && u.department_id === actingUser.department_id && actingUser.department_id !== null)
-      );
-    }
-
-    return [];
-  }, [users, actingUser]);
-
-  const isStaff = actingUser && actingUser.access_level === 0;
-
   // Initialize selection: default to the logged-in user; managers can change via dropdown
   useEffect(() => {
     if (!actingUser) return;
@@ -1263,61 +1236,59 @@ const handleTaskCreated = (newTask) => {
                       </Typography>
                     )}
                   </Box>
-                  {!isStaff && (
-                    <Box sx={styles.dialogInfoItem}>
-                      <Typography variant="caption" sx={styles.dialogInfoLabel}>
-                        Assignee
-                      </Typography>
-                      {editMode ? (
-                        <FormControl fullWidth size="small">
-                          <Select
-                            value={
-                              draft?.assignee_id != null
-                                ? String(draft.assignee_id)
-                                : selectedTask.assignee_id != null
-                                ? String(selectedTask.assignee_id)
-                                : ""
+                  <Box sx={styles.dialogInfoItem}>
+                    <Typography variant="caption" sx={styles.dialogInfoLabel}>
+                      Assignee
+                    </Typography>
+                    {editMode ? (
+                      <FormControl fullWidth size="small">
+                        <Select
+                          value={
+                            draft?.assignee_id != null
+                              ? String(draft.assignee_id)
+                              : selectedTask.assignee_id != null
+                              ? String(selectedTask.assignee_id)
+                              : ""
+                          }
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === "") {
+                              setDraft((d) => ({ ...d, assignee_id: null }));
+                              return;
                             }
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (raw === "") {
-                                setDraft((d) => ({ ...d, assignee_id: null }));
-                                return;
-                              }
-                              const next = Number(raw);
-                              setDraft((d) => ({
-                                ...d,
-                                assignee_id: Number.isInteger(next) ? next : null,
-                                // Remove assignee from members if present
-                                members_id: Array.isArray(d?.members_id)
-                                  ? d.members_id.filter((id) => id !== next)
-                                  : []
-                              }));
-                            }}
-                            renderValue={(val) => {
-                              if (val === "" || val == null) return "— None —";
-                              return usersById.get(Number(val))?.full_name || "—";
-                            }}
-                          >
-                            <MenuItem value="">
-                              <ListItemText primary="— None —" />
+                            const next = Number(raw);
+                            setDraft((d) => ({
+                              ...d,
+                              assignee_id: Number.isInteger(next) ? next : null,
+                              // Remove assignee from members if present
+                              members_id: Array.isArray(d?.members_id)
+                                ? d.members_id.filter((id) => id !== next)
+                                : []
+                            }));
+                          }}
+                          renderValue={(val) => {
+                            if (val === "" || val == null) return "— None —";
+                            return usersById.get(Number(val))?.full_name || "—";
+                          }}
+                        >
+                          <MenuItem value="">
+                            <ListItemText primary="— None —" />
+                          </MenuItem>
+                          {Array.from(usersById.values()).map((u) => (
+                            <MenuItem key={u.user_id} value={String(u.user_id)}>
+                              <ListItemText primary={`${u.full_name} (${u.role})`} />
                             </MenuItem>
-                            {availableAssignees.map((u) => (
-                              <MenuItem key={u.user_id} value={String(u.user_id)}>
-                                <ListItemText primary={`${u.full_name} (${u.role})`} />
-                              </MenuItem>
-                            ))}
-                          </Select>
-                        </FormControl>
-                      ) : (
-                        <Typography variant="body2" sx={styles.dialogInfoValue}>
-                          {selectedTask.assignee_id != null
-                            ? usersById.get(selectedTask.assignee_id)?.full_name || "—"
-                            : "—"}
-                        </Typography>
-                      )}
-                    </Box>
-                  )}
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : (
+                      <Typography variant="body2" sx={styles.dialogInfoValue}>
+                        {selectedTask.assignee_id != null
+                          ? usersById.get(selectedTask.assignee_id)?.full_name || "—"
+                          : "—"}
+                      </Typography>
+                    )}
+                  </Box>
                 </Stack>
 
                 {/* Row 2: Members */}
