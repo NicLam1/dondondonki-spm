@@ -87,6 +87,40 @@ async function apiJson(path, { method = "GET", params, body } = {}) {
   return json ?? {};
 }
 
+// Helper function to get assignable users based on access level
+function getAssignableUsers(usersMap, actingUser) {
+  if (!usersMap || !actingUser) return [];
+  
+  const level = typeof actingUser.access_level === 'number' ? actingUser.access_level : 0;
+  const allUsers = Array.from(usersMap.values());
+  
+  // Level 0 (STAFF): Cannot assign anyone
+  if (level === 0) return [];
+  
+  // Level 3 (HR): Can assign anyone
+  if (level === 3) return allUsers;
+  
+  // Level 1 (MANAGER): Can assign self + STAFF in same team
+  if (level === 1) {
+    const teamId = actingUser.team_id;
+    return allUsers.filter(u => 
+      u.user_id === actingUser.user_id || // Self
+      (u.access_level < 1 && u.team_id === teamId && teamId != null) // STAFF in same team
+    );
+  }
+  
+  // Level 2 (DIRECTOR): Can assign self + MANAGERS and STAFF in same department
+  if (level === 2) {
+    const deptId = actingUser.department_id;
+    return allUsers.filter(u => 
+      u.user_id === actingUser.user_id || // Self
+      (u.access_level < 2 && u.department_id === deptId && deptId != null) // Subordinates in same dept
+    );
+  }
+  
+  return [];
+}
+
 // No normalization needed; using canonical statuses only
 
 // ---------- UI chips ----------
@@ -1247,7 +1281,7 @@ const handleTaskCreated = (newTask) => {
                           <MenuItem value="">
                             <ListItemText primary="— None —" />
                           </MenuItem>
-                          {Array.from(usersById.values()).map((u) => (
+                          {getAssignableUsers(usersById, actingUser).map((u) => (
                             <MenuItem key={u.user_id} value={String(u.user_id)}>
                               <ListItemText primary={`${u.full_name} (${u.role})`} />
                             </MenuItem>

@@ -50,6 +50,42 @@ async function apiJson(path, { method = "GET", params, body } = {}) {
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:4000/api";
 
+// Helper function to filter assignable users based on access level
+const getAssignableUsers = (users, actingUserId) => {
+  if (!users || !actingUserId) return [];
+  
+  const actingUser = users.find(u => u.user_id === actingUserId);
+  if (!actingUser) return [];
+  
+  const level = typeof actingUser.access_level === 'number' ? actingUser.access_level : 0;
+  
+  // Level 0 (STAFF): Cannot assign anyone
+  if (level === 0) return [];
+  
+  // Level 3 (HR): Can assign anyone
+  if (level === 3) return users;
+  
+  // Level 1 (MANAGER): Can assign self + STAFF in same team
+  if (level === 1) {
+    const teamId = actingUser.team_id;
+    return users.filter(u => 
+      u.user_id === actingUserId || // Self
+      (u.access_level < 1 && u.team_id === teamId && teamId != null) // STAFF in same team
+    );
+  }
+  
+  // Level 2 (DIRECTOR): Can assign self + MANAGERS and STAFF in same department
+  if (level === 2) {
+    const deptId = actingUser.department_id;
+    return users.filter(u => 
+      u.user_id === actingUserId || // Self
+      (u.access_level < 2 && u.department_id === deptId && deptId != null) // Subordinates in same dept
+    );
+  }
+  
+  return [];
+};
+
 const TaskForm = ({ isOpen, onClose, onSubmit, parentTask, users, actingUserId }) => {
     // Get today's date in YYYY-MM-DD format
     const today = new Date().toISOString().split('T')[0];
@@ -810,7 +846,7 @@ const handleSubmit = async (e) => {
                 <MenuItem value="">
                   <em>None</em>
                 </MenuItem>
-                {(parentTask ? availableMembers : users).map((u) => (
+                {getAssignableUsers(users, actingUserId).map((u) => (
                   <MenuItem key={u.user_id} value={String(u.user_id)}>
                     {u.full_name} ({u.email})
                   </MenuItem>
@@ -852,7 +888,7 @@ const handleSubmit = async (e) => {
               />
               {showMemberDropdown && (
                 <div className="search-dropdown">
-                  {filteredMembers.slice(0, 10).map(user => (
+                  {filteredMembers.map(user => (
                     <div
                       key={user.user_id}
                       className={`search-dropdown-item ${formData.members_id.includes(user.user_id) ? 'selected' : ''} ${(user.user_id === formData.owner_id || user.user_id === formData.assignee_id) ? 'disabled' : ''}`}
