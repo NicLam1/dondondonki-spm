@@ -19,3 +19,5 @@ npm --prefix testing test -- --coverage
 ```
 
 Jest will create a fresh `coverage/` directory each time. Open `coverage/lcov-report/index.html` to view the report in your browser.
+
+test
